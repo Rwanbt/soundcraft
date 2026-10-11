@@ -328,6 +328,66 @@ mod tests {
     }
 
     #[test]
+    fn rejected_tempo_changes_are_atomic() {
+        let mut map = TempoMap::default();
+        map.set_tempo(960, 90.0).unwrap();
+        let before = map.clone();
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 4.99, 1000.01] {
+            assert!(map.set_tempo(480, bad).is_err());
+            assert_eq!(map, before);
+        }
+        for invalid_factor in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 0.0, 0.01, 100.0] {
+            assert!(map.scale_tempos(invalid_factor).is_err());
+            assert_eq!(map, before);
+        }
+        assert!(map.set_meter(720, 0, 4).is_err());
+        assert_eq!(map, before);
+        assert!(map.set_meter(720, 4, 3).is_err());
+        assert_eq!(map, before);
+    }
+
+    #[test]
+    fn valid_tempo_scaling_is_applied_to_every_segment() {
+        let mut map = TempoMap::default();
+        map.set_tempo(960, 90.0).unwrap();
+        map.scale_tempos(2.0).unwrap();
+        assert_eq!(map.tempo_at_tick(0), 240.0);
+        assert_eq!(map.tempo_at_tick(960), 180.0);
+        assert_eq!(map.tempos().len(), 2);
+    }
+
+    #[test]
+    fn tempo_boundary_is_continuous_and_roundtrips() {
+        let mut map = TempoMap::default();
+        let sr = SampleRate::HZ_48000;
+        map.set_tempo(960, 60.0).unwrap();
+        map.set_tempo(1920, 240.0).unwrap();
+        for (tick, samples) in [(0, 0), (960, 24_000), (1920, 72_000), (2880, 84_000)] {
+            assert_eq!(map.tick_to_samples(tick, sr), samples);
+            assert_eq!(map.samples_to_ticks(samples, sr), tick);
+        }
+        assert_eq!(map.tempo_at_tick(959), 120.0);
+        assert_eq!(map.tempo_at_tick(960), 60.0);
+        assert_eq!(map.tempo_at_tick(1920), 240.0);
+        assert_eq!(map.tick_to_samples(959, sr), 23_975);
+        assert_eq!(map.tick_to_samples(961, sr), 24_050);
+    }
+
+    #[test]
+    fn replacing_and_removing_events_preserves_sorted_unique_map() {
+        let mut map = TempoMap::default();
+        map.set_tempo(1920, 80.0).unwrap();
+        map.set_tempo(960, 90.0).unwrap();
+        map.set_tempo(960, 100.0).unwrap();
+        assert_eq!(map.tempos().iter().map(|e| e.tick).collect::<Vec<_>>(), vec![0, 960, 1920]);
+        assert_eq!(map.tempo_at_tick(960), 100.0);
+        assert!(map.remove_tempo(960));
+        assert!(!map.remove_tempo(960));
+        assert_eq!(map.tempo_at_tick(960), 120.0);
+        assert!(!map.remove_tempo(0));
+    }
+
+    #[test]
     fn negative_positions() {
         let m = TempoMap::default();
         assert_eq!(m.bar_beat_at_tick(-TICKS_PER_QUARTER * 4), BarBeat { bar: 0, beat: 1, tick: 0 });
