@@ -83,11 +83,7 @@ fn persisted_midi_instrument_renders_identically_after_reload() {
     let json = original.to_json().unwrap();
     let reloaded = Session::from_json(&json).unwrap();
     let second_json = reloaded.to_json().unwrap();
-    assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&json).unwrap(),
-        serde_json::from_str::<serde_json::Value>(&second_json).unwrap(),
-        "session must round-trip without losing semantic state"
-    );
+    assert_eq!(json, second_json, "session must round-trip without losing serialized state");
     let range = Range::new(0, 8_192);
     let before = render_range(&original, range, 512);
     let after = render_range(&reloaded, range, 512);
