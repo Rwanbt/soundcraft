@@ -38,6 +38,8 @@ def read_lcov(path: Path) -> dict[str, tuple[int, int]]:
             if source is not None:
                 raise ValueError(f"record not terminated before line {line_number}")
             source, found, hit = raw[3:].replace("\\", "/"), None, None
+            if not source.strip():
+                raise ValueError(f"empty source path at line {line_number}")
         elif raw.startswith("LF:") or raw.startswith("LH:"):
             if source is None:
                 raise ValueError(f"coverage count outside source record at line {line_number}")
@@ -51,7 +53,9 @@ def read_lcov(path: Path) -> dict[str, tuple[int, int]]:
                     raise ValueError(f"duplicate LH count in {source}")
                 hit = value
         elif raw == "end_of_record":
-            if source is None or found is None or hit is None:
+            if source is None:
+                raise ValueError(f"orphan end_of_record at line {line_number}")
+            if found is None or hit is None:
                 raise ValueError(f"incomplete LCOV entry at line {line_number}")
             if found < 0 or hit < 0 or hit > found:
                 raise ValueError(f"impossible coverage count in {source}: {hit}/{found}")
