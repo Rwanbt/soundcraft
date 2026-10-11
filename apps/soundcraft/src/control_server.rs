@@ -64,3 +64,48 @@ fn serve(stream: TcpStream, tx: Sender<ControlRequest>, ctx: egui::Context) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A real TCP client exercises the JSON-lines transport, error responses, request
+    /// correlation and asynchronous handoff without starting a window or audio device.
+    #[test]
+    fn tcp_control_handles_bad_json_and_round_trips_real_requests() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let address = listener.local_addr().unwrap();
+        let (sender, receiver) = channel::<ControlRequest>();
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            serve(stream, sender, egui::Context::default());
+        });
+
+        let mut client = TcpStream::connect(address).unwrap();
+        client.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let mut read = BufReader::new(client.try_clone().unwrap());
+
+        writeln!(client).unwrap(); // Blank lines never produce spurious responses.
+        writeln!(client, "{{invalid-json").unwrap();
+        let mut line = String::new();
+        read.read_line(&mut line).unwrap();
+        let invalid: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(invalid["ok"], false);
+        assert!(invalid["error"].as_str().unwrap().contains("bad JSON"));
+
+        writeln!(client, "{}", json!({"id": 77, "method": "session.inspect", "params": {"detail": "full"}})).unwrap();
+        let request = receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(request.method, "session.inspect");
+        assert_eq!(request.params["detail"], "full");
+        request.reply.send(json!({"ok": true, "result": {"name": "QA"}})).unwrap();
+
+        line.clear();
+        read.read_line(&mut line).unwrap();
+        let result: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(result, json!({"id": 77, "ok": true, "result": {"name": "QA"}}));
+
+        drop(read);
+        drop(client);
+        server.join().unwrap();
+    }
+}
