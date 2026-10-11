@@ -128,3 +128,111 @@ mod tests {
         assert_eq!(super::score("anything", ""), Some(0));
     }
 }
+
+#[cfg(test)]
+mod interaction_regressions {
+    use super::*;
+    use crate::Services;
+
+    fn app() -> SoundApp {
+        SoundApp::new(soundcraft_engine::demo::demo_engine(), None, Services::default())
+    }
+
+    fn input(ctx: &egui::Context, app: &mut SoundApp, key: Option<Key>) {
+        let events = key
+            .map(|key| vec![egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE }])
+            .unwrap_or_default();
+        crate::fonts::install(ctx);
+        let mut frame = ctx.run_ui(egui::RawInput { events, ..Default::default() }, |_| show(app, ctx));
+        frame.textures_delta.clear();
+    }
+
+    #[test]
+    fn palette_search_has_stable_case_insensitive_substring_and_subsequence_ranks() {
+        assert_eq!(score("Bounce Mix", "BOUNCE"), Some(1000));
+        assert_eq!(score("Bounce Mix", "mix"), Some(993));
+        assert!(score("Bounce Mix", "bmx").is_some());
+        assert!(score("Bounce Mix", "mxbi").is_none());
+        assert_eq!(score("éÉ É", ""), Some(0));
+        assert!(score("Pan Automation", "pan") > score("Pan Automation", "pna"));
+    }
+
+    #[test]
+    fn palette_catalog_contains_real_engine_and_ui_commands() {
+        let catalog = entries();
+        assert!(catalog.len() > 100, "search must index both the engine and UI catalogs");
+        assert!(catalog.iter().any(|entry| entry.id == "track.new"));
+        assert!(catalog.iter().any(|entry| entry.id == "window.about"));
+        assert!(catalog.iter().any(|entry| entry.id == "session.save"));
+        assert!(catalog.iter().any(|entry| entry.path.contains('›')));
+    }
+
+    #[test]
+    fn closed_search_never_changes_query_or_selection() {
+        let mut app = app();
+        app.palette.query = "keep me".into();
+        app.palette.selected = 7;
+        let ctx = egui::Context::default();
+        input(&ctx, &mut app, Some(Key::Escape));
+        assert!(!app.ui.show_search);
+        assert_eq!(app.palette.query, "keep me");
+        assert_eq!(app.palette.selected, 7);
+    }
+
+    #[test]
+    fn escape_resets_query_and_selection_without_running_a_command() {
+        let mut app = app();
+        app.ui.show_search = true;
+        app.palette.query = "window.about".into();
+        app.palette.selected = 4;
+        let before = app.engine.session().to_json().unwrap();
+        let ctx = egui::Context::default();
+        input(&ctx, &mut app, Some(Key::Escape));
+        assert!(!app.ui.show_search);
+        assert_eq!(app.palette.query, "");
+        assert_eq!(app.palette.selected, 0);
+        assert_eq!(app.engine.session().to_json().unwrap(), before);
+    }
+
+    #[test]
+    fn empty_results_do_not_trigger_a_command_on_enter() {
+        let mut app = app();
+        app.ui.show_search = true;
+        app.palette.query = "unfindable-command-zzzzzzzzz".into();
+        app.palette.selected = usize::MAX;
+        let ctx = egui::Context::default();
+        input(&ctx, &mut app, Some(Key::Enter));
+        assert!(app.ui.show_search, "no matching command must not close search");
+        assert_eq!(app.palette.selected, 0, "out of range cursor must clamp to zero");
+    }
+
+    #[test]
+    fn arrow_keys_move_within_sorted_results_and_do_not_underflow() {
+        let mut app = app();
+        app.ui.show_search = true;
+        app.palette.query = "window".into();
+        let ctx = egui::Context::default();
+        input(&ctx, &mut app, Some(Key::ArrowUp));
+        assert_eq!(app.palette.selected, 0);
+        input(&ctx, &mut app, Some(Key::ArrowDown));
+        assert_eq!(app.palette.selected, 1);
+        input(&ctx, &mut app, Some(Key::ArrowUp));
+        assert_eq!(app.palette.selected, 0);
+        app.palette.selected = usize::MAX;
+        input(&ctx, &mut app, None);
+        assert!(app.palette.selected <= 13, "at most fourteen entries can be displayed");
+    }
+
+    #[test]
+    fn search_return_invokes_a_menu_command_and_resets_palette() {
+        let mut app = app();
+        app.ui.show_search = true;
+        app.palette.query = "window.about".into();
+        app.palette.selected = 0;
+        let ctx = egui::Context::default();
+        input(&ctx, &mut app, Some(Key::Enter));
+        assert!(!app.ui.show_search, "activated command closes search");
+        assert_eq!(app.palette.query, "");
+        assert_eq!(app.palette.selected, 0);
+    }
+}
