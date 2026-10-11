@@ -1,0 +1,73 @@
+name: Offscreen desktop UI smoke
+
+on:
+  pull_request:
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/ui-egui/**'
+      - 'crates/engine/**'
+      - 'crates/mix/**'
+      - 'assets/**'
+      - '.github/workflows/offscreen-ui-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: offscreen-ui-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  offscreen-ui:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      CARGO_TERM_COLOR: always
+      LIBGL_ALWAYS_SOFTWARE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: offscreen-ui
+      - name: Install CPU rendering and native libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev \
+            libx11-dev libxcursor-dev libxrandr-dev libxi-dev libgtk-3-dev \
+            libfontconfig1-dev pkg-config cmake xvfb mesa-vulkan-drivers libgl1-mesa-dri
+      - name: Render actual desktop demo to PNG
+        run: |
+          mkdir -p ui-smoke
+          xvfb-run -a cargo run --locked -p soundcraft-ui-egui --example ui_shot -- \
+            ui-smoke/desktop-dark.png --size 1200x800 --system-theme dark
+      - name: Render actual mobile layout to PNG
+        run: |
+          xvfb-run -a cargo run --locked -p soundcraft-ui-egui --example ui_shot -- \
+            ui-smoke/mobile-light.png --blank --size 393x852 --system-theme light
+      - name: Validate PNG structure and layout dimensions
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import struct
+          for name, landscape in [("desktop-dark", True), ("mobile-light", False)]:
+              path = Path(f"ui-smoke/{name}.png")
+              payload = path.read_bytes()
+              assert len(payload) > 1024, f"{name}: missing or trivially small frame"
+              assert payload[:8] == bytes([137, 80, 78, 71, 13, 10, 26, 10]), f"{name}: not a PNG"
+              assert payload[12:16] == b"IHDR", f"{name}: IHDR missing"
+              w, h = struct.unpack(">II", payload[16:24])
+              assert w >= 200 and h >= 200, f"{name}: undersized image {w}x{h}"
+              assert (w > h) == landscape, f"{name}: unexpected orientation {w}x{h}"
+              print(f"PASS {name}: {w}x{h}, {len(payload)} bytes")
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: soundcraft-offscreen-ui-png
+          path: ui-smoke/*.png
+          if-no-files-found: error
+          retention-days: 14
