@@ -280,10 +280,12 @@ impl InputRing {
 
     pub fn push(&self, samples: &[f32]) {
         if let Ok(mut s) = self.state.try_lock() {
-            s.data.extend(samples.iter().copied());
-            while s.data.len() > self.cap {
-                s.data.pop_front();
-            }
+            // Never temporarily grow the FIFO to the input callback's size.
+            // Its initial capacity already holds more than the configured half-second cap.
+            let tail = if samples.len() > self.cap { &samples[samples.len() - self.cap..] } else { samples };
+            let excess = s.data.len().saturating_add(tail.len()).saturating_sub(self.cap);
+            s.data.drain(..excess);
+            s.data.extend(tail.iter().copied());
         }
     }
 
@@ -365,6 +367,19 @@ mod ring_tests {
         assert_eq!(out[0][0], 0.0);
         assert_eq!(out[1][0], 1.0);
         assert_eq!(out[0][49], 98.0);
+    }
+
+    #[test]
+    fn monitor_oversized_callback_does_not_grow_the_ring_capacity() {
+        let ring = InputRing::new(2, 100);
+        let original_capacity = ring.state.lock().unwrap().data.capacity();
+        let oversized: Vec<f32> = (0..100_000).map(|i| i as f32).collect();
+        ring.push(&oversized);
+        let state = ring.state.lock().unwrap();
+        assert_eq!(state.data.len(), ring.cap);
+        assert_eq!(state.data.capacity(), original_capacity, "audio callback must not allocate for an oversized input block");
+        let expected = &oversized[oversized.len() - ring.cap..];
+        assert!(state.data.iter().copied().eq(expected.iter().copied()), "retain the newest input frames in exact order");
     }
 
     #[test]
