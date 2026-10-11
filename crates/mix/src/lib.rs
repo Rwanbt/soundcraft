@@ -826,6 +826,9 @@ fn process_strip(
         }
         TrackKind::Instrument | TrackKind::Midi => {
             if let Some(inst) = &mut strip.instrument {
+                if let Some(saved) = &t.instrument {
+                    apply_instrument_params(inst, saved);
+                }
                 schedule_notes(s, t, pos, frames, inst, &mut strip.held);
                 if strip.buf.len() >= 2 {
                     inst.plugin.process(&mut strip.buf, frames);
@@ -1273,6 +1276,21 @@ fn schedule_notes(s: &Session, t: &Track, pos: Samples, frames: usize, inst: &mu
             if off >= pos && off < end {
                 inst.plugin.note_off(usize::try_from(off - pos).unwrap_or(0), n.pitch);
                 held.retain(|p| *p != n.pitch);
+            }
+        }
+    }
+}
+
+/// Restore persisted instrument controls before rendering MIDI, including offline bounces.
+/// Use the same change detection as inserts to avoid redundant plugin updates per block.
+fn apply_instrument_params(slot: &mut PluginSlot, instrument: &soundcraft_model::Insert) {
+    if slot.applied.len() != instrument.params.len() {
+        slot.applied = vec![f32::NAN; instrument.params.len()];
+    }
+    for ((name, value), last) in instrument.params.iter().zip(slot.applied.iter_mut()) {
+        if value.to_bits() != last.to_bits() {
+            if slot.plugin.set_param(name, *value) {
+                *last = *value;
             }
         }
     }
@@ -1810,6 +1828,25 @@ mod tests {
             pl.clips.push(Clip::audio(id, "dc", SourceId(900), 0, 0, frames as i64));
         }
         (s, t)
+    }
+
+    #[test]
+    fn saved_instrument_level_is_applied_to_rendered_plugin() {
+        let mut s = Session::default();
+        let t = s.add_track(TrackKind::Instrument, ChannelFormat::Stereo, None);
+        let ins = s.track_mut(t).unwrap().instrument.as_mut().unwrap();
+        ins.params.insert("level".into(), -12.0);
+
+        let mut mix = MixEngine::new(48_000.0, 512);
+        let mut output = vec![vec![0.0; 512]; 2];
+        mix.render(&s, 0, 512, &mut output);
+        let first = mix.strips.get(&t).unwrap().instrument.as_ref().unwrap().plugin.param("level");
+        assert_eq!(first, Some(-12.0), "saved instrument level must reach DSP");
+
+        s.track_mut(t).unwrap().instrument.as_mut().unwrap().params.insert("level".into(), -18.0);
+        mix.render(&s, 512, 512, &mut output);
+        let updated = mix.strips.get(&t).unwrap().instrument.as_ref().unwrap().plugin.param("level");
+        assert_eq!(updated, Some(-18.0), "changes must update the existing DSP instance");
     }
 
     #[test]
