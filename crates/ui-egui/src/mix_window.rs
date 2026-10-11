@@ -719,12 +719,8 @@ mod rendering_regressions {
     fn full_and_narrow_mix_layouts_render_real_demo_tracks_without_mutation() {
         assert_eq!(strip_width(false), 98.0);
         assert_eq!(strip_width(true), 64.0);
-        for (views, narrow) in [
-            (vec!["inserts_ae", "sends_ae", "io", "color"], false),
-            (vec!["all"], false),
-            (vec!["all"], true),
-            (vec!["io"], true),
-        ] {
+        for (views, narrow) in [(vec!["inserts_ae", "sends_ae", "io", "color"], false), (vec!["all"], false), (vec!["all"], true), (vec!["io"], true)]
+        {
             let n = render_mix(&views, narrow);
             assert!(n > 0, "mixer should paint content with views {views:?} narrow={narrow}");
         }
