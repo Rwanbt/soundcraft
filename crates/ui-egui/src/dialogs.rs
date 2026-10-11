@@ -523,3 +523,129 @@ mod tests {
         assert_eq!(params["bpm"], 133.5);
     }
 }
+
+#[cfg(test)]
+mod dialog_contract_regressions {
+    use super::*;
+
+    #[test]
+    fn dialog_open_names_cover_every_modal_variant() {
+        let mut dialogs = Dialogs::default();
+        assert_eq!(dialogs.open_name(), None);
+        let all = [
+            (
+                Dialog::NewTracks { count: 1, format: "Mono".into(), kind: "audio".into(), timebase: "samples".into(), name: "Audio".into() },
+                "new_tracks",
+            ),
+            (Dialog::NewSession { name: "Test".into(), sample_rate: 48_000, demo: false }, "new_session"),
+            (Dialog::Bounce { path: "x.wav".into(), format: "wav".into(), bit_depth: "24".into(), normalize: false }, "bounce"),
+            (Dialog::RenameTrack { id: TrackId(1), name: "Track".into() }, "rename_track"),
+            (Dialog::RenameClip { id: ClipId(1), name: "Clip".into() }, "rename_clip"),
+            (Dialog::PathPrompt { cmd: "file.import_audio".into(), title: "Import".into(), path: "x".into(), key: "path".into() }, "path"),
+            (Dialog::Number { cmd: "edit.repeat".into(), title: "Repeat".into(), key: "count".into(), value: 2.0, suffix: "times".into() }, "number"),
+            (Dialog::TempoChange { at: 0, bpm: 120.0 }, "tempo_change"),
+            (Dialog::Fades { shape: "equal power".into() }, "fades"),
+            (Dialog::StripSilence { threshold: -48.0, min_ms: 50.0, pre_ms: 5.0, post_ms: 20.0 }, "strip_silence"),
+            (Dialog::Group { name: "Group 1".into(), edit: true, mix: true, members: Vec::new() }, "group"),
+            (Dialog::Session { frame_rate: "24".into(), bit_depth: "24".into() }, "session"),
+            (Dialog::ScoreSetup { title: "Score".into(), composer: "Composer".into(), bars_per_system: 4, show_track_names: true }, "score_setup"),
+        ];
+        for (modal, name) in all {
+            dialogs.open = Some(modal);
+            assert_eq!(dialogs.open_name(), Some(name));
+        }
+        dialogs.open = None;
+        assert_eq!(dialogs.open_name(), None);
+    }
+
+    #[test]
+    fn menu_modal_catalog_has_correct_defaults_and_does_not_invoke_commands() {
+        let engine = soundcraft_engine::demo::demo_engine();
+        let mut dialogs = Dialogs::default();
+        let specs = [
+            ("track.new", "new_tracks"),
+            ("session.new", "new_session"),
+            ("file.bounce_mix", "bounce"),
+            ("file.import_audio", "path"),
+            ("file.import_midi", "path"),
+            ("session.open", "path"),
+            ("session.save_as", "path"),
+            ("session.save_copy", "path"),
+            ("edit.repeat", "number"),
+            ("edit.shift", "number"),
+            ("event.transpose", "number"),
+            ("event.quantize", "number"),
+            ("edit.fades_create", "fades"),
+            ("edit.strip_silence", "strip_silence"),
+            ("track.group", "group"),
+            ("setup.session", "session"),
+            ("file.score_setup", "score_setup"),
+        ];
+        let unchanged = engine.session().to_json().unwrap();
+        for (command, name) in specs {
+            assert!(dialogs.open_for_command(&engine, command), "{command}");
+            assert_eq!(dialogs.open_name(), Some(name), "{command}");
+        }
+        assert_eq!(engine.session().to_json().unwrap(), unchanged, "opening a modal must not mutate the session");
+    }
+
+    #[test]
+    fn numeric_and_fade_dialogs_preserve_command_semantics() {
+        let engine = soundcraft_engine::demo::demo_engine();
+        let mut dialogs = Dialogs::default();
+        for (command, key, expected) in [
+            ("edit.repeat", "count", 2.0),
+            ("edit.shift", "by_seconds", 1.0),
+            ("event.transpose", "semitones", 12.0),
+            ("event.quantize", "strength", 100.0),
+        ] {
+            assert!(dialogs.open_for_command(&engine, command));
+            match dialogs.open.take() {
+                Some(Dialog::Number { cmd, key: actual_key, value, .. }) => {
+                    assert_eq!(cmd, command);
+                    assert_eq!(actual_key, key);
+                    assert_eq!(value, expected);
+                }
+                other => panic!("wrong number dialog for {command}: {other:?}"),
+            }
+        }
+        assert!(dialogs.open_for_command(&engine, "edit.fades_create"));
+        assert!(matches!(dialogs.open.take(), Some(Dialog::Fades { shape }) if shape == "equal power"));
+        assert!(dialogs.open_for_command(&engine, "edit.strip_silence"));
+        assert!(matches!(dialogs.open.take(), Some(Dialog::StripSilence { threshold, .. }) if threshold == -48.0));
+    }
+
+    #[test]
+    fn rename_dialogs_copy_names_and_unknown_commands_do_not_replace_them() {
+        let engine = soundcraft_engine::demo::demo_engine();
+        let track = engine.session().tracks[0].id;
+        let mut dialogs = Dialogs::default();
+        dialogs.open_rename_track(track, "Track A");
+        assert!(matches!(&dialogs.open, Some(Dialog::RenameTrack { id, name }) if *id == track && name == "Track A"));
+        assert!(!dialogs.open_for_command(&engine, "__not_a_real_command__"));
+        assert_eq!(dialogs.open_name(), Some("rename_track"));
+        dialogs.open_rename_clip(ClipId(3), "Clip A");
+        assert!(matches!(&dialogs.open, Some(Dialog::RenameClip { id, name }) if *id == ClipId(3) && name == "Clip A"));
+    }
+
+    #[test]
+    fn menu_path_prompts_keep_command_and_destination_field() {
+        let engine = soundcraft_engine::demo::demo_engine();
+        let mut dialogs = Dialogs::default();
+        for command in ["file.import_audio", "file.import_midi", "session.open", "session.save_as", "session.save_copy"] {
+            assert!(dialogs.open_for_command(&engine, command));
+            match dialogs.open.take() {
+                Some(Dialog::PathPrompt { cmd, key, path, .. }) => {
+                    assert_eq!(cmd, command);
+                    assert_eq!(key, "path");
+                    assert!(!path.is_empty() || cfg!(target_arch = "wasm32"));
+                    if command.starts_with("session.save") {
+                        assert!(path.ends_with(".scraft"), "{command}: {path}");
+                    }
+                }
+                other => panic!("missing path prompt for {command}: {other:?}"),
+            }
+        }
+        assert!(!takes_path("not.a.real.command"));
+    }
+}
