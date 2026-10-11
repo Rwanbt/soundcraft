@@ -1834,8 +1834,9 @@ mod tests {
     fn saved_instrument_level_is_applied_to_rendered_plugin() {
         let mut s = Session::default();
         let t = s.add_track(TrackKind::Instrument, ChannelFormat::Stereo, None);
-        let ins = s.track_mut(t).unwrap().instrument.as_mut().unwrap();
-        ins.params.insert("level".into(), -12.0);
+        let mut instrument = Insert::new("subtractive_synth");
+        instrument.params.insert("level".into(), -12.0);
+        s.track_mut(t).unwrap().instrument = Some(instrument);
 
         let mut mix = MixEngine::new(48_000.0, 512);
         let mut output = vec![vec![0.0; 512]; 2];
@@ -1847,6 +1848,41 @@ mod tests {
         mix.render(&s, 512, 512, &mut output);
         let updated = mix.strips.get(&t).unwrap().instrument.as_ref().unwrap().plugin.param("level");
         assert_eq!(updated, Some(-18.0), "changes must update the existing DSP instance");
+    }
+
+    #[test]
+    fn offline_bounce_respects_saved_instrument_level() {
+        let mut s = Session::default();
+        let track = s.add_track(TrackKind::Instrument, ChannelFormat::Stereo, None);
+        let id = s.new_clip_id();
+        let seq = soundcraft_midi::Sequence {
+            notes: vec![soundcraft_midi::Note {
+                pitch: 60,
+                velocity: 100,
+                release_velocity: 64,
+                channel: 0,
+                start: 0,
+                length: 960,
+            }],
+            ctrls: Vec::new(),
+        };
+        s.track_mut(track).unwrap().playlist_mut().unwrap().clips.push(Clip::midi(id, "note", 0, 48_000, seq));
+
+        let mut instrument = Insert::new("subtractive_synth");
+        instrument.params.insert("level".into(), -12.0);
+        s.track_mut(track).unwrap().instrument = Some(instrument);
+        let quiet = render_range(&s, Range::new(0, 4096), 512);
+        let quiet_peak = quiet.iter().flat_map(|ch| ch.iter()).fold(0.0f32, |a, x| a.max(x.abs()));
+
+        s.track_mut(track).unwrap().instrument.as_mut().unwrap().params.insert("level".into(), -6.0);
+        let loud = render_range(&s, Range::new(0, 4096), 512);
+        let loud_peak = loud.iter().flat_map(|ch| ch.iter()).fold(0.0f32, |a, x| a.max(x.abs()));
+
+        assert!(quiet_peak > 1e-4, "MIDI note must generate audible signal");
+        assert!(
+            loud_peak > quiet_peak * 1.8,
+            "raising the instrument level by 6 dB should raise the bounce peak: {quiet_peak} vs {loud_peak}"
+        );
     }
 
     #[test]
