@@ -104,6 +104,12 @@ impl Remote {
             return Err("connection closed".into());
         }
         let v: Value = serde_json::from_str(&buf).map_err(|e| e.to_string())?;
+        // Reject stale, out-of-order and misrouted replies instead of applying a
+        // different request's result. A mismatched stream is unsafe to reuse.
+        if v.get("id").and_then(Value::as_u64) != Some(id) {
+            self.conn = None;
+            return Err(format!("control reply ID mismatch: expected {id}"));
+        }
         if v.get("ok").and_then(Value::as_bool).unwrap_or(false) {
             Ok(v.get("result").cloned().unwrap_or(Value::Null))
         } else {
@@ -151,5 +157,105 @@ mod tests {
     fn remote_reports_unreachable() {
         let mut r = Remote::new("127.0.0.1:1");
         assert!(r.call("session.inspect", json!({})).is_err());
+    }
+}
+
+#[cfg(test)]
+mod remote_protocol_regressions {
+    use super::*;
+    use std::net::TcpListener;
+
+    #[test]
+    fn remote_reuses_a_socket_and_correlates_sequential_requests() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            for id in 1..=2 {
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                let request: Value = serde_json::from_str(&line).unwrap();
+                assert_eq!(request["id"], id);
+                assert_eq!(request["method"], "session.inspect");
+                writeln!(stream, "{}", json!({"id": id, "ok": true, "result": {"sequence": id}})).unwrap();
+            }
+        });
+        let mut remote = Remote::new(&port.to_string());
+        assert!(remote.has_ui());
+        assert_eq!(remote.call("session.inspect", json!({})).unwrap()["sequence"], 1);
+        assert_eq!(remote.call("session.inspect", json!({})).unwrap()["sequence"], 2);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn remote_rejects_a_wrong_id_and_reconnects_cleanly_on_next_call() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (mut first, _) = listener.accept().unwrap();
+            let mut first_read = BufReader::new(first.try_clone().unwrap());
+            let mut line = String::new();
+            first_read.read_line(&mut line).unwrap();
+            assert_eq!(serde_json::from_str::<Value>(&line).unwrap()["id"], 1);
+            writeln!(first, "{}", json!({"id": 999, "ok": true, "result": "wrong request"})).unwrap();
+            drop(first_read);
+            drop(first);
+            let (mut next, _) = listener.accept().unwrap();
+            let mut next_read = BufReader::new(next.try_clone().unwrap());
+            line.clear();
+            next_read.read_line(&mut line).unwrap();
+            assert_eq!(serde_json::from_str::<Value>(&line).unwrap()["id"], 2);
+            writeln!(next, "{}", json!({"id": 2, "ok": true, "result": "correct"})).unwrap();
+        });
+        let mut remote = Remote::new(&port.to_string());
+        let err = remote.call("session.inspect", json!({})).unwrap_err();
+        assert!(err.contains("ID mismatch"), "{err}");
+        assert!(remote.conn.is_none(), "mismatched response invalidates the socket");
+        assert_eq!(remote.call("session.inspect", json!({})).unwrap(), json!("correct"));
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn remote_retries_once_when_a_connection_closes_without_a_reply() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            assert_eq!(serde_json::from_str::<Value>(&line).unwrap()["id"], 1);
+            drop(reader);
+            let (mut second, _) = listener.accept().unwrap();
+            let mut read = BufReader::new(second.try_clone().unwrap());
+            line.clear();
+            read.read_line(&mut line).unwrap();
+            assert_eq!(serde_json::from_str::<Value>(&line).unwrap()["id"], 2);
+            writeln!(second, "{}", json!({"id": 2, "ok": true, "result": 123})).unwrap();
+        });
+        let mut remote = Remote::new(&port.to_string());
+        assert_eq!(remote.call("session.inspect", json!({})).unwrap(), json!(123));
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn remote_surfaces_remote_errors_and_invalid_json_without_panicking() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut read = BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            read.read_line(&mut line).unwrap();
+            writeln!(stream, "{}", json!({"id": 1, "ok": false, "error": "permission denied"})).unwrap();
+            line.clear();
+            read.read_line(&mut line).unwrap();
+            writeln!(stream, "{{ invalid json").unwrap();
+        });
+        let mut remote = Remote::new(&port.to_string());
+        assert_eq!(remote.call("session.inspect", json!({})).unwrap_err(), "permission denied");
+        assert!(remote.call("session.inspect", json!({})).is_err());
+        server.join().unwrap();
     }
 }
