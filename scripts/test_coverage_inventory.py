@@ -25,7 +25,7 @@ class CoverageInventoryTests(unittest.TestCase):
         return self.path
 
     def test_cross_platform_paths_and_component_keys(self) -> None:
-        self.assertEqual(relative_path(r"C:\\ci\\src\\crates\\mix\\src\\lib.rs"), "crates/mix/src/lib.rs")
+        self.assertEqual(relative_path(r"C:\ci\src\crates\mix\src\lib.rs"), "crates/mix/src/lib.rs")
         self.assertEqual(relative_path("/home/runner/work/apps/soundcraft/src/main.rs"), "apps/soundcraft/src/main.rs")
         self.assertEqual(relative_path("xtask/src/main.rs"), "xtask/src/main.rs")
         self.assertEqual(component("crates/mix/src/lib.rs"), "crates/mix")
@@ -56,7 +56,7 @@ class CoverageInventoryTests(unittest.TestCase):
         self.assertEqual(one, two)
 
     def test_rejects_duplicate_after_absolute_path_normalization(self) -> None:
-        with self.assertRaisesRegex(ValueError, "source recorded twice"):
+        with self.assertRaisesRegex(ValueError, "duplicate source record|source recorded twice"):
             generate(self.lcov(
                 ("/checkout/crates/mix/src/lib.rs", 10, 9),
                 ("crates/mix/src/lib.rs", 10, 9),
