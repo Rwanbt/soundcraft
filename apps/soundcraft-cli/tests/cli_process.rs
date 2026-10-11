@@ -28,11 +28,7 @@ impl Drop for Scratch {
 }
 
 fn cli(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_soundcraft-cli"))
-        .env("SOUNDCRAFT_NO_PREFS", "1")
-        .args(args)
-        .output()
-        .unwrap()
+    Command::new(env!("CARGO_BIN_EXE_soundcraft-cli")).env("SOUNDCRAFT_NO_PREFS", "1").args(args).output().unwrap()
 }
 
 fn utf8(bytes: &[u8]) -> String {
