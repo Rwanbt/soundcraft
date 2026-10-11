@@ -342,7 +342,7 @@ impl SlotCtx<'_> {
             let state = if third { ins.state_bytes() } else { None };
             create_instance(&ins.plugin, state.as_deref(), self.sr, self.mb, ch)
         }?;
-        Some(PluginSlot { id: ins.plugin.clone(), ch, plugin, applied: Vec::new() })
+        Some(PluginSlot { id: ins.plugin.clone(), ch, plugin, applied: vec![f32::NAN; ins.params.len()] })
     }
 }
 
