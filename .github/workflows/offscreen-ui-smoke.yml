@@ -57,7 +57,7 @@ jobs:
               path = Path(f"ui-smoke/{name}.png")
               payload = path.read_bytes()
               assert len(payload) > 1024, f"{name}: missing or trivially small frame"
-              assert payload[:8] == b"\\x89PNG\\r\\n\\x1a\\n", f"{name}: not a PNG"
+              assert payload[:8] == bytes([137, 80, 78, 71, 13, 10, 26, 10]), f"{name}: not a PNG"
               assert payload[12:16] == b"IHDR", f"{name}: IHDR missing"
               w, h = struct.unpack(">II", payload[16:24])
               assert w >= 200 and h >= 200, f"{name}: undersized image {w}x{h}"
