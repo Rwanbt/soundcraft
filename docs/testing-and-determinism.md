@@ -52,11 +52,31 @@ test/lint commands and runs native Windows/macOS suites in addition to Linux.
 
 ## Coverage policy
 
-Use the `Rust coverage evidence` workflow for an LCOV artefact and a measurable
-baseline; do not claim a percentage from counting test files. Adopt separate
-per-crate coverage floors only after reviewing uncovered critical paths,
-especially `mix`, `engine`, `playback`, `audio-io` and plugin hosts.
-Coverage is supporting evidence, not a proxy for correct output.
+The [first successful LLVM coverage run](https://github.com/Rwanbt/soundcraft/actions/runs/38152950247)
+on 2026-10-11 establishes a **measured Linux workspace baseline**:
+
+| Scope | Covered source lines |
+| --- | ---: |
+| Whole workspace | **74.66%** (34,478 / 46,181) |
+| `crates/mix/src/lib.rs` | 85.60% |
+| `crates/engine/src/io.rs` | 73.39% |
+| `crates/playback/src/lib.rs` | 54.56% |
+| `crates/playback/src/record.rs` | 57.31% |
+| `crates/vst3-host/src/ffi.rs` | 82.36% |
+| `apps/soundcraft-cli/src/main.rs` | 13.04% |
+| `apps/soundcraft/src/control_server.rs` | 0.00% |
+
+The separate real-process CLI test PR has **not yet been merged into this
+coverage branch**; the coverage numbers are a baseline, not a claim about
+the combined changes. A conservative **70% workspace line-coverage floor**
+is enforced from the LCOV record counts to prevent major regressions while
+allowing independent new functionality. Do not treat this floor as a
+claim of adequate coverage for recording or hardware paths.
+
+Prioritize tests for the low-coverage playback, recording, executable CLI
+and control-server code. Adopt higher per-module floors only after
+explicitly testing their missed critical paths. Coverage is supporting
+evidence, not a proxy for correct output.
 
 ## Manual / hardware gates still required
 
