@@ -176,6 +176,30 @@ mod tests {
     }
 
     #[test]
+    fn overlaps_matches_intersection_for_all_small_ranges() {
+        for a in -4..=4 {
+            for b in -4..=4 {
+                for c in -4..=4 {
+                    for d in -4..=4 {
+                        let left = Range::new(a, b);
+                        let right = Range::new(c, d);
+                        assert_eq!(left.overlaps(&right), right.overlaps(&left));
+                        assert_eq!(left.overlaps(&right), left.intersect(&right).is_some());
+                        assert_eq!(left.intersect(&right), right.intersect(&left));
+                        if let Some(overlap) = left.intersect(&right) {
+                            assert!(!overlap.is_empty());
+                            assert!(left.contains(overlap.start));
+                            assert!(right.contains(overlap.start));
+                            assert!(overlap.end <= left.end);
+                            assert!(overlap.end <= right.end);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn range_ops() {
         let a = Range::new(10, 0);
         assert_eq!(a, Range { start: 0, end: 10 });
