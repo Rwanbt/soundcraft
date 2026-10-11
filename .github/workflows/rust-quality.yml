@@ -55,3 +55,43 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Unit and integration tests
         run: cargo test --workspace --locked
+      - name: Asset attribution
+        run: cargo xtask assets
+      - name: Architecture layers
+        run: cargo xtask layers
+
+  wasm-check:
+    name: WebAssembly compile check (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm-check
+      - name: Build-check web crates, including the app
+        run: cargo xtask wasm
+
+  platform-tests:
+    name: Rust tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, macos-15]
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: native-${{ matrix.os }}
+      - name: Workspace unit and integration tests
+        run: cargo test --workspace --locked
