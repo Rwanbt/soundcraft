@@ -157,3 +157,69 @@ mod tests {
         assert_eq!(super::diatonic(64), (2, false));
     }
 }
+
+#[cfg(test)]
+mod rendering_regressions {
+    use super::*;
+    use crate::Services;
+    use serde_json::json;
+
+    fn app() -> SoundApp {
+        SoundApp::new(soundcraft_engine::demo::demo_engine(), None, Services::default())
+    }
+
+    fn frame(app: &mut SoundApp, ctx: &egui::Context) -> usize {
+        ctx.run_ui(egui::RawInput::default(), |_| show(app, ctx)).shapes.len()
+    }
+
+    #[test]
+    fn all_128_midi_pitches_use_valid_staff_steps_and_accidentals() {
+        let sharp_classes = [1, 3, 6, 8, 10];
+        for pitch in 0u8..=127 {
+            let (step, sharp) = diatonic(pitch);
+            assert_eq!(sharp, sharp_classes.contains(&(pitch % 12)), "pitch {pitch}");
+            assert!((-40..=40).contains(&step), "pitch {pitch} has out-of-range diatonic step {step}");
+            if pitch <= 115 {
+                assert_eq!(diatonic(pitch + 12).0, step + 7, "octave must add seven staff steps");
+            }
+        }
+    }
+
+    #[test]
+    fn hidden_or_empty_score_editor_cannot_mutate_the_session() {
+        let mut app = app();
+        let initial = app.engine.session().to_json().unwrap();
+        let ctx = egui::Context::default();
+        let _ = frame(&mut app, &ctx);
+        assert_eq!(app.engine.session().to_json().unwrap(), initial);
+
+        app.ui.show_score = true;
+        let drawn = frame(&mut app, &ctx);
+        assert!(drawn > 0, "open empty score window must render a useful prompt");
+        assert_eq!(app.engine.session().to_json().unwrap(), initial);
+    }
+
+    #[test]
+    fn selected_real_midi_clip_renders_notation_without_editing_notes() {
+        let mut app = app();
+        let clip_id = app.engine.session().track_by_name("Keys").unwrap().clips()[0].id;
+        app.engine.execute("edit.select", &json!({"clips": [clip_id.0]})).unwrap();
+        app.ui.show_score = true;
+        let initial = app.engine.session().to_json().unwrap();
+        let ctx = egui::Context::default();
+        let n = frame(&mut app, &ctx);
+        assert!(n > 0, "MIDI clip score should submit drawable egui shapes");
+        assert_eq!(app.engine.session().to_json().unwrap(), initial, "score is read-only");
+        assert!(app.ui.show_score);
+    }
+
+    #[test]
+    fn lead_midi_clip_renders_after_switching_selection() {
+        let mut app = app();
+        let clip_id = app.engine.session().track_by_name("Lead").unwrap().clips()[0].id;
+        app.engine.execute("edit.select", &json!({"clips": [clip_id.0]})).unwrap();
+        app.ui.show_score = true;
+        let ctx = egui::Context::default();
+        assert!(frame(&mut app, &ctx) > 0);
+    }
+}
