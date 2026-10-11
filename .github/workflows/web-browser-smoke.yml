@@ -1,0 +1,71 @@
+name: Browser WASM smoke
+
+on:
+  pull_request:
+    paths:
+      - 'apps/soundcraft-web/**'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'packaging/web/**'
+      - 'scripts/web-smoke.mjs'
+      - '.github/workflows/web-browser-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: browser-smoke-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  chromium-webgl-smoke:
+    name: Actual WASM app in headless Chromium (WebGL2)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 80
+    env:
+      CARGO_TERM_COLOR: always
+      TRUNK_VERSION: 0.21.14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: web-chromium-smoke
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install Trunk
+        run: |
+          curl -fsSL "https://github.com/trunk-rs/trunk/releases/download/v${TRUNK_VERSION}/trunk-x86_64-unknown-linux-gnu.tar.gz" |
+            tar -xz -C "$HOME/.cargo/bin" trunk
+          trunk --version
+      - name: Build real web application
+        working-directory: apps/soundcraft-web
+        run: trunk build --release
+      - name: Install fixed Chromium test runner
+        run: |
+          npm install --no-save --package-lock=false playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Serve packaged WASM from a subpath
+        run: |
+          python3 -m http.server 8765 --bind 127.0.0.1 --directory dist > "$RUNNER_TEMP/web-server.log" 2>&1 &
+          echo "$!" > "$RUNNER_TEMP/web-server.pid"
+          for i in $(seq 1 30); do
+            if curl --fail --silent 'http://127.0.0.1:8765/web/' > /dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/web-server.log"
+          exit 1
+      - name: Check desktop and mobile startup, UI canvas and browser exceptions
+        run: node scripts/web-smoke.mjs
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: soundcraft-web-browser-smoke-failures
+          path: web-smoke-*.png
+          if-no-files-found: ignore
+          retention-days: 7
