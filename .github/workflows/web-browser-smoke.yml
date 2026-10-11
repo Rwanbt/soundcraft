@@ -54,8 +54,9 @@ jobs:
         run: |
           python3 -m http.server 8765 --bind 127.0.0.1 --directory dist > "$RUNNER_TEMP/web-server.log" 2>&1 &
           echo "$!" > "$RUNNER_TEMP/web-server.pid"
-          for i in $(seq 1 30); do
+          for attempt in $(seq 1 30); do
             if curl --fail --silent 'http://127.0.0.1:8765/web/' > /dev/null; then exit 0; fi
+            echo "waiting for local WASM server ($attempt/30)"
             sleep 1
           done
           cat "$RUNNER_TEMP/web-server.log"
