@@ -136,6 +136,59 @@ pub fn deinterleave(data: &[f32], channels: usize, sample_rate: u32) -> Take {
 
 #[cfg(test)]
 mod tests {
+    fn simulated_recorder(channels: usize) -> super::Recorder {
+        super::Recorder {
+            shared: std::sync::Arc::new(super::Shared { armed: std::sync::atomic::AtomicBool::new(false), data: std::sync::Mutex::new(Vec::new()) }),
+            monitor: super::InputRing::new(channels, 48_000),
+            #[cfg(not(target_os = "freebsd"))]
+            _stream: None,
+            device_name: "Synthetic input".into(),
+            sample_rate: 48_000,
+            channels,
+        }
+    }
+
+    #[test]
+    fn recorder_arm_take_and_rearm_are_deterministic_without_a_device() {
+        let recorder = simulated_recorder(2);
+        assert!(!recorder.is_armed());
+        recorder.shared.data.lock().unwrap().extend([0.1, 0.2, 0.3, 0.4]);
+        assert_eq!(recorder.captured_frames(), 2);
+
+        // Starting a new take discards any stale samples from the previous recording.
+        recorder.arm();
+        assert!(recorder.is_armed());
+        assert_eq!(recorder.captured_frames(), 0);
+        recorder.shared.data.lock().unwrap().extend([1.0, 2.0, 3.0, 4.0]);
+        let take = recorder.take();
+        assert_eq!(take.sample_rate, 48_000);
+        assert_eq!(take.channels, vec![vec![1.0, 3.0], vec![2.0, 4.0]]);
+        assert!(!recorder.is_armed());
+        assert_eq!(recorder.captured_frames(), 0);
+        assert!(recorder.take().channels.iter().all(Vec::is_empty));
+
+        recorder.arm();
+        recorder.shared.data.lock().unwrap().extend([5.0, 6.0]);
+        assert_eq!(recorder.take().channels, vec![vec![5.0], vec![6.0]]);
+    }
+
+    #[test]
+    fn recorder_frame_count_is_zero_when_the_shared_buffer_is_locked() {
+        let recorder = simulated_recorder(2);
+        recorder.shared.data.lock().unwrap().extend([0.1, 0.2, 0.3, 0.4]);
+        let lock = recorder.shared.data.lock().unwrap();
+        assert_eq!(recorder.captured_frames(), 0, "callback-facing frame count must never block");
+        drop(lock);
+        assert_eq!(recorder.captured_frames(), 2);
+    }
+
+    #[test]
+    fn deinterleave_discards_incomplete_frames_without_shifting_channels() {
+        let take = super::deinterleave(&[0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 3, 96_000);
+        assert_eq!(take.sample_rate, 96_000);
+        assert_eq!(take.channels, vec![vec![0.0, 3.0], vec![1.0, 4.0], vec![2.0, 5.0]]);
+    }
+
     #[test]
     fn deinterleaves() {
         let t = super::deinterleave(&[1.0, 2.0, 3.0, 4.0, 5.0], 2, 48_000);
@@ -264,6 +317,44 @@ mod ring_tests {
         assert_eq!(out[0][0], 0.0);
         assert_eq!(out[1][0], 1.0);
         assert_eq!(out[0][49], 98.0);
+    }
+
+    #[test]
+    fn monitor_discards_oldest_frames_at_half_second_capacity() {
+        let ring = InputRing::new(1, 48_000);
+        let input: Vec<f32> = (0..30_000).map(|i| i as f32).collect();
+        ring.push(&input);
+        assert_eq!(ring.state.lock().unwrap().data.len(), 24_000);
+        let mut out = vec![vec![-1.0f32; 32]];
+        ring.pop_into(&mut out, 32, 48_000);
+        assert_eq!(out[0], (6_000..6_032).map(|i| i as f32).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn monitor_try_lock_never_blocks_and_zeroes_previous_samples() {
+        let ring = InputRing::new(2, 48_000);
+        ring.push(&[0.1, 0.2, 0.3, 0.4]);
+        let mut output = vec![vec![7.0f32; 8], vec![7.0f32; 8]];
+        let lock = ring.state.lock().unwrap();
+        // Audio callback must be able to return silence immediately if the UI owns
+        // the monitoring state lock, rather than waiting on the lock.
+        ring.pop_into(&mut output, 8, 48_000);
+        assert!(output.iter().flatten().all(|v| *v == 0.0));
+        ring.push(&[0.8, 0.9]);
+        drop(lock);
+        let mut out = vec![vec![0.0; 1], vec![0.0; 1]];
+        ring.pop_into(&mut out, 1, 48_000);
+        assert_eq!(out[0][0], 0.1);
+        assert_eq!(out[1][0], 0.2);
+    }
+
+    #[test]
+    fn monitor_unknown_rates_match_one_input_frame_per_output() {
+        let ring = InputRing::new(1, 0);
+        ring.push(&[0.2, 0.4, 0.6, 0.8]);
+        let mut out = vec![vec![0.0; 3]];
+        ring.pop_into(&mut out, 3, 0);
+        assert_eq!(out[0], vec![0.2, 0.4, 0.6]);
     }
 
     /// Nothing buffered: silence, not stale data.
