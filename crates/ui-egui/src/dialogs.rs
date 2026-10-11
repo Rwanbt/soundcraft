@@ -662,8 +662,10 @@ mod modal_rendering_regressions {
     fn assert_modal_renders(mut app: SoundApp, expected: &str) {
         let original = app.engine.session().to_json().unwrap();
         let ctx = egui::Context::default();
-        let frame = ctx.run_ui(egui::RawInput::default(), |_| show(&mut app, &ctx));
+        crate::fonts::install(&ctx);
+        let mut frame = ctx.run_ui(egui::RawInput::default(), |_| show(&mut app, &ctx));
         assert!(!frame.shapes.is_empty(), "{expected}: modal produced no draw instructions");
+        frame.textures_delta.clear();
         assert_eq!(app.dialogs.open_name(), Some(expected), "{expected}: modal disappeared without user input");
         assert_eq!(app.engine.session().to_json().unwrap(), original, "{expected}: rendering the form edited session data");
     }
@@ -718,8 +720,10 @@ mod modal_rendering_regressions {
         assert!(app.dialogs.open_for_command(&app.engine, "track.new"));
         let original = app.engine.session().to_json().unwrap();
         let ctx = egui::Context::default();
+        crate::fonts::install(&ctx);
         let press = egui::Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE };
-        let _ = ctx.run_ui(egui::RawInput { events: vec![press], ..Default::default() }, |_| show(&mut app, &ctx));
+        let mut frame = ctx.run_ui(egui::RawInput { events: vec![press], ..Default::default() }, |_| show(&mut app, &ctx));
+        frame.textures_delta.clear();
         assert_eq!(app.dialogs.open_name(), None);
         assert_eq!(app.engine.session().to_json().unwrap(), original, "Escape is cancel, not submit");
     }
