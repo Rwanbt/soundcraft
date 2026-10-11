@@ -59,19 +59,7 @@ impl Recorder {
                 move |data: &[f32], _: &cpal::InputCallbackInfo| {
                     crate::mark_audio_thread();
                     mon.push(data);
-                    if !sh.armed.load(Ordering::Relaxed) {
-                        backlog.clear();
-                        return;
-                    }
-                    if let Ok(mut d) = sh.data.try_lock() {
-                        if d.len() < MAX_SAMPLES {
-                            d.extend_from_slice(&backlog);
-                            d.extend_from_slice(data);
-                        }
-                        backlog.clear();
-                    } else if backlog.len() < 1 << 20 {
-                        backlog.extend_from_slice(data);
-                    }
+                    append_captured(&sh, &mut backlog, data, MAX_SAMPLES, 1 << 20);
                 },
                 |e| {
                     // Possibly the audio thread (see `crate::mark_audio_thread`).
@@ -117,6 +105,27 @@ impl Recorder {
     /// Samples captured so far (per channel).
     pub fn captured_frames(&self) -> usize {
         self.shared.data.try_lock().map_or(0, |d| d.len() / self.channels.max(1))
+    }
+}
+
+/// Collect input without blocking on the UI-owned take buffer. Both the persisted take
+/// and the temporary backlog have hard sample limits, including whole incoming blocks.
+/// The oldest captured samples win when the one-hour cap is reached.
+fn append_captured(shared: &Shared, backlog: &mut Vec<f32>, input: &[f32], limit: usize, backlog_limit: usize) {
+    if !shared.armed.load(Ordering::Relaxed) {
+        backlog.clear();
+        return;
+    }
+    if let Ok(mut captured) = shared.data.try_lock() {
+        let remaining = limit.saturating_sub(captured.len());
+        let from_backlog = backlog.len().min(remaining);
+        captured.extend_from_slice(&backlog[..from_backlog]);
+        let from_input = input.len().min(remaining - from_backlog);
+        captured.extend_from_slice(&input[..from_input]);
+        backlog.clear();
+    } else {
+        let room = backlog_limit.saturating_sub(backlog.len());
+        backlog.extend_from_slice(&input[..input.len().min(room)]);
     }
 }
 
@@ -180,6 +189,45 @@ mod tests {
         assert_eq!(recorder.captured_frames(), 0, "callback-facing frame count must never block");
         drop(lock);
         assert_eq!(recorder.captured_frames(), 2);
+    }
+
+    #[test]
+    fn audio_callback_take_cap_is_hard_even_for_an_oversized_block() {
+        let recorder = simulated_recorder(2);
+        let mut backlog = Vec::new();
+        recorder.arm();
+        super::append_captured(&recorder.shared, &mut backlog, &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 4, 8);
+        assert_eq!(recorder.captured_frames(), 2, "capture must not overshoot the cap");
+        super::append_captured(&recorder.shared, &mut backlog, &[7.0, 8.0], 4, 8);
+        assert_eq!(recorder.take().channels, vec![vec![1.0, 3.0], vec![2.0, 4.0]]);
+    }
+
+    #[test]
+    fn audio_callback_keeps_backlog_in_order_under_contention() {
+        let recorder = simulated_recorder(2);
+        let mut backlog = Vec::new();
+        recorder.arm();
+        let guard = recorder.shared.data.lock().unwrap();
+        super::append_captured(&recorder.shared, &mut backlog, &[1.0, 2.0], 8, 4);
+        super::append_captured(&recorder.shared, &mut backlog, &[3.0, 4.0], 8, 4);
+        super::append_captured(&recorder.shared, &mut backlog, &[9.0, 10.0], 8, 4);
+        assert_eq!(backlog, vec![1.0, 2.0, 3.0, 4.0], "backlog cap must not be exceeded");
+        drop(guard);
+
+        super::append_captured(&recorder.shared, &mut backlog, &[5.0, 6.0], 8, 4);
+        assert!(backlog.is_empty());
+        assert_eq!(recorder.take().channels, vec![vec![1.0, 3.0, 5.0], vec![2.0, 4.0, 6.0]]);
+    }
+
+    #[test]
+    fn disarming_discards_pending_callback_backlog() {
+        let recorder = simulated_recorder(1);
+        recorder.arm();
+        let mut backlog = vec![12.0, 13.0];
+        let _ = recorder.take();
+        super::append_captured(&recorder.shared, &mut backlog, &[14.0, 15.0], 8, 4);
+        assert!(backlog.is_empty());
+        assert_eq!(recorder.captured_frames(), 0);
     }
 
     #[test]
