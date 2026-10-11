@@ -649,3 +649,82 @@ mod dialog_contract_regressions {
         assert!(!takes_path("not.a.real.command"));
     }
 }
+
+#[cfg(test)]
+mod modal_rendering_regressions {
+    use super::*;
+    use crate::Services;
+
+    fn app() -> SoundApp {
+        SoundApp::new(soundcraft_engine::demo::demo_engine(), None, Services::default())
+    }
+
+    fn assert_modal_renders(mut app: SoundApp, expected: &str) {
+        let original = app.engine.session().to_json().unwrap();
+        let ctx = egui::Context::default();
+        crate::fonts::install(&ctx);
+        let mut frame = ctx.run_ui(egui::RawInput::default(), |_| show(&mut app, &ctx));
+        assert!(!frame.shapes.is_empty(), "{expected}: modal produced no draw instructions");
+        frame.textures_delta.clear();
+        assert_eq!(app.dialogs.open_name(), Some(expected), "{expected}: modal disappeared without user input");
+        assert_eq!(app.engine.session().to_json().unwrap(), original, "{expected}: rendering the form edited session data");
+    }
+
+    #[test]
+    fn every_menu_dialog_renders_read_only_without_a_windowing_system() {
+        for (id, expected) in [
+            ("track.new", "new_tracks"),
+            ("session.new", "new_session"),
+            ("file.bounce_mix", "bounce"),
+            ("file.import_audio", "path"),
+            ("file.import_midi", "path"),
+            ("session.open", "path"),
+            ("session.save_as", "path"),
+            ("session.save_copy", "path"),
+            ("edit.repeat", "number"),
+            ("edit.shift", "number"),
+            ("event.transpose", "number"),
+            ("event.quantize", "number"),
+            ("edit.fades_create", "fades"),
+            ("edit.strip_silence", "strip_silence"),
+            ("track.group", "group"),
+            ("setup.session", "session"),
+            ("file.score_setup", "score_setup"),
+        ] {
+            let mut app = app();
+            assert!(app.dialogs.open_for_command(&app.engine, id), "{id}");
+            assert_modal_renders(app, expected);
+        }
+    }
+
+    #[test]
+    fn rename_clip_track_and_tempo_dialogs_render_without_side_effects() {
+        let mut track = app();
+        let track_id = track.engine.session().tracks[0].id;
+        track.dialogs.open_rename_track(track_id, "A new track name");
+        assert_modal_renders(track, "rename_track");
+
+        let mut clip = app();
+        let clip_id = clip.engine.session().track_by_name("Kick").unwrap().clips()[0].id;
+        clip.dialogs.open_rename_clip(clip_id, "A new clip name");
+        assert_modal_renders(clip, "rename_clip");
+
+        let mut tempo = app();
+        tempo.dialogs.open = Some(Dialog::TempoChange { at: 48000, bpm: 133.5 });
+        assert_modal_renders(tempo, "tempo_change");
+    }
+
+    #[test]
+    fn escape_closes_a_form_without_executing_its_command() {
+        let mut app = app();
+        assert!(app.dialogs.open_for_command(&app.engine, "track.new"));
+        let original = app.engine.session().to_json().unwrap();
+        let ctx = egui::Context::default();
+        crate::fonts::install(&ctx);
+        let press = egui::Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE };
+        let mut frame = ctx.run_ui(egui::RawInput { events: vec![press], ..Default::default() }, |_| show(&mut app, &ctx));
+        frame.textures_delta.clear();
+        assert_eq!(app.dialogs.open_name(), None);
+        assert_eq!(app.engine.session().to_json().unwrap(), original, "Escape is cancel, not submit");
+    }
+}
