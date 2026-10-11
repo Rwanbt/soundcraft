@@ -103,7 +103,7 @@ impl Range {
         s >= self.start && s < self.end
     }
     pub fn overlaps(&self, o: &Range) -> bool {
-        self.start < o.end && o.start < self.end
+        !self.is_empty() && !o.is_empty() && self.start < o.end && o.start < self.end
     }
     pub fn intersect(&self, o: &Range) -> Option<Range> {
         let s = self.start.max(o.start);
@@ -163,10 +163,14 @@ mod tests {
         assert!(a.contains(i64::MIN));
         assert!(!a.contains(i64::MAX));
         assert_eq!(a.shifted(1), Range { start: i64::MIN + 1, end: i64::MAX });
-        assert_eq!(Range::new(i64::MAX - 2, i64::MAX).shifted(100),
-                   Range::point(i64::MAX));
-        assert_eq!(Range::new(i64::MIN, i64::MIN + 2).shifted(-100),
-                   Range::point(i64::MIN));
+        assert_eq!(
+            Range::new(i64::MAX - 2, i64::MAX).shifted(100),
+            Range::point(i64::MAX)
+        );
+        assert_eq!(
+            Range::new(i64::MIN, i64::MIN + 2).shifted(-100),
+            Range::point(i64::MIN)
+        );
     }
 
     #[test]
