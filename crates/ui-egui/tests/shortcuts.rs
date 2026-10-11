@@ -24,3 +24,26 @@ fn ctrl_shift_arrows_nudge_the_selected_clip_gain() {
         assert_eq!(app.engine.session().find_clip(kick).unwrap().1.gain_db, 1.0, "{os:?}");
     }
 }
+
+#[test]
+fn cmd_or_ctrl_z_undoes_clip_gain_from_keyboard_on_all_desktop_platforms() {
+    let pc_ctrl = Modifiers { ctrl: true, command: true, ..Modifiers::NONE };
+    for (os, nudge, command) in [
+        (OperatingSystem::Mac, Modifiers::CTRL, Modifiers::COMMAND),
+        (OperatingSystem::Windows, pc_ctrl, pc_ctrl),
+        (OperatingSystem::Nix, pc_ctrl, pc_ctrl),
+    ] {
+        let mut app = SoundApp::new(soundcraft_engine::demo::demo_engine(), None, Services::default());
+        let kick = app.engine.session().track_by_name("Kick").unwrap().clips()[0].id;
+        app.engine.execute("edit.select", &json!({"clips": [kick.0]})).unwrap();
+        let baseline = app.engine.session().find_clip(kick).unwrap().1.gain_db;
+        let ctx = egui::Context::default();
+        ctx.set_os(os);
+        press(&ctx, &mut app, Key::ArrowUp, Modifiers { shift: true, ..nudge });
+        let modified = app.engine.session().find_clip(kick).unwrap().1.gain_db;
+        assert!(modified > baseline, "keyboard gesture must change gain on {os:?}");
+        press(&ctx, &mut app, Key::Z, command);
+        let restored = app.engine.session().find_clip(kick).unwrap().1.gain_db;
+        assert_eq!(restored, baseline, "Cmd/Ctrl+Z must undo the UI gesture on {os:?}");
+    }
+}
