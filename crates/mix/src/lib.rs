@@ -826,6 +826,9 @@ fn process_strip(
         }
         TrackKind::Instrument | TrackKind::Midi => {
             if let Some(inst) = &mut strip.instrument {
+                if let Some(settings) = &t.instrument {
+                    apply_instrument_params(inst, settings);
+                }
                 schedule_notes(s, t, pos, frames, inst, &mut strip.held);
                 if strip.buf.len() >= 2 {
                     inst.plugin.process(&mut strip.buf, frames);
@@ -1274,6 +1277,20 @@ fn schedule_notes(s: &Session, t: &Track, pos: Samples, frames: usize, inst: &mu
                 inst.plugin.note_off(usize::try_from(off - pos).unwrap_or(0), n.pitch);
                 held.retain(|p| *p != n.pitch);
             }
+        }
+    }
+}
+
+/// Apply saved instrument parameters before processing, including on the first block.
+/// Instrument parameters do not use insert-slot automation indices.
+fn apply_instrument_params(slot: &mut PluginSlot, ins: &soundcraft_model::Insert) {
+    if slot.applied.len() != ins.params.len() {
+        slot.applied = vec![f32::NAN; ins.params.len()];
+    }
+    for ((key, value), last) in ins.params.iter().zip(slot.applied.iter_mut()) {
+        if value.to_bits() != last.to_bits() {
+            slot.plugin.set_param(key, *value);
+            *last = *value;
         }
     }
 }
@@ -1799,6 +1816,26 @@ mod tests {
     use soundcraft_audio_io::AudioBuffer;
     use soundcraft_model::{Insert, SourceAudio, SourceId};
     use std::sync::Arc;
+
+    #[test]
+    fn instrument_parameters_are_applied_on_render_and_when_changed() {
+        let mut session = Session::default();
+        let id = session.add_track(TrackKind::Instrument, ChannelFormat::Stereo, None);
+        let mut instrument = Insert::new("drum_synth");
+        instrument.params.insert("level".to_string(), -12.0);
+        session.track_mut(id).unwrap().instrument = Some(instrument);
+
+        let mut engine = MixEngine::new(48_000.0, 128);
+        let mut out = vec![vec![0.0; 128]; 2];
+        engine.render(&session, 0, 128, &mut out);
+        let slot = engine.strips.get(&id).unwrap().instrument.as_ref().unwrap();
+        assert_eq!(slot.plugin.param("level"), Some(-12.0));
+
+        session.track_mut(id).unwrap().instrument.as_mut().unwrap().params.insert("level".to_string(), -6.0);
+        engine.render(&session, 128, 128, &mut out);
+        let slot = engine.strips.get(&id).unwrap().instrument.as_ref().unwrap();
+        assert_eq!(slot.plugin.param("level"), Some(-6.0));
+    }
 
     fn session_with_dc(level: f32, frames: usize) -> (Session, TrackId) {
         let mut s = Session::default();
