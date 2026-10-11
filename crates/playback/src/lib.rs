@@ -730,6 +730,78 @@ fn open_device(want_rate: u32, want_ch: u16) -> Result<(cpal::Device, cpal::Stre
 mod tests {
     use super::*;
 
+    fn simulated_state(device_rate: f64) -> (std::sync::mpsc::Sender<Cmd>, AudioState, Arc<Shared>) {
+        let session = Arc::new(soundcraft_model::Session::default());
+        let shared = Arc::new(Shared {
+            position: AtomicI64::new(0),
+            playing: AtomicBool::new(false),
+            speed: AtomicU32::new(1000),
+            meters: Mutex::new(MeterSnapshot::default()),
+        });
+        let (tx, rx) = channel();
+        let state = AudioState::new(rx, Arc::clone(&shared), session, device_rate, channel().0);
+        (tx, state, shared)
+    }
+
+    #[test]
+    fn transport_commands_are_processed_in_order_without_an_audio_device() {
+        let (tx, mut state, shared) = simulated_state(48_000.0);
+        tx.send(Cmd::Play { from: 512, end: None, looped: None }).unwrap();
+        state.drain();
+        assert!(state.playing);
+        assert_eq!(state.pos, 512);
+
+        let mut buf = vec![1.0; 2 * 64];
+        state.fill(&mut buf, 2);
+        assert!(buf.iter().all(|v| *v == 0.0), "empty session is silent while playing");
+        assert_eq!(shared.position.load(Ordering::Relaxed), 1024);
+
+        tx.send(Cmd::Locate(12_345)).unwrap();
+        state.drain();
+        assert_eq!(state.pos, 12_345);
+        assert_eq!(state.pending_len, 0);
+        assert_eq!(state.read, 0.0);
+
+        tx.send(Cmd::Stop).unwrap();
+        state.fill(&mut buf, 2);
+        assert!(!state.playing);
+        assert!(!shared.playing.load(Ordering::Relaxed));
+        assert!(buf.iter().all(|v| *v == 0.0), "stopped engine must overwrite stale device samples");
+    }
+
+    #[test]
+    fn loop_shorter_than_minimum_does_not_wrap() {
+        let (tx, mut state, shared) = simulated_state(48_000.0);
+        tx.send(Cmd::Play { from: 0, end: Some(128), looped: Some(Range::new(0, 64)) }).unwrap();
+        let mut out = vec![0.0f32; 2 * 512];
+        state.fill(&mut out, 2);
+        assert_eq!(state.looped, None, "a tiny loop must not cause a transport spin");
+        assert_eq!(shared.position.load(Ordering::Relaxed), 128);
+        assert!(!state.playing);
+    }
+
+    #[test]
+    fn empty_session_playback_follows_software_speed_without_hardware() {
+        let (tx, mut state, shared) = simulated_state(48_000.0);
+        tx.send(Cmd::Play { from: 0, end: None, looped: None }).unwrap();
+        let mut out = vec![f32::NAN; 512 * 2];
+        state.fill(&mut out, 2);
+        assert_eq!(shared.position.load(Ordering::Relaxed), 512);
+        assert!(out.iter().all(|x| *x == 0.0));
+
+        shared.speed.store(2000, Ordering::Relaxed);
+        tx.send(Cmd::Locate(0)).unwrap();
+        state.fill(&mut out, 2);
+        assert_eq!(shared.position.load(Ordering::Relaxed), 1024);
+        assert!(out.iter().all(|x| *x == 0.0));
+
+        shared.speed.store(0, Ordering::Relaxed);
+        tx.send(Cmd::Locate(0)).unwrap();
+        state.fill(&mut out, 2);
+        assert!(shared.position.load(Ordering::Relaxed) > 0);
+        assert!(out.iter().all(|x| x.is_finite()), "clamped zero speed must not produce NaN or Inf");
+    }
+
     #[test]
     fn audio_state_plays_and_stops_at_end() {
         let s = Arc::new(soundcraft_model::Session::default());
