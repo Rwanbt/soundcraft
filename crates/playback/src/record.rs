@@ -138,10 +138,7 @@ pub fn deinterleave(data: &[f32], channels: usize, sample_rate: u32) -> Take {
 mod tests {
     fn simulated_recorder(channels: usize) -> super::Recorder {
         super::Recorder {
-            shared: std::sync::Arc::new(super::Shared {
-                armed: std::sync::atomic::AtomicBool::new(false),
-                data: std::sync::Mutex::new(Vec::new()),
-            }),
+            shared: std::sync::Arc::new(super::Shared { armed: std::sync::atomic::AtomicBool::new(false), data: std::sync::Mutex::new(Vec::new()) }),
             monitor: super::InputRing::new(channels, 48_000),
             #[cfg(not(target_os = "freebsd"))]
             _stream: None,
