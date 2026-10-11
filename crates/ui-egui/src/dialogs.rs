@@ -533,7 +533,10 @@ mod dialog_contract_regressions {
         let mut dialogs = Dialogs::default();
         assert_eq!(dialogs.open_name(), None);
         let all = [
-            (Dialog::NewTracks { count: 1, format: "Mono".into(), kind: "audio".into(), timebase: "samples".into(), name: "Audio".into() }, "new_tracks"),
+            (
+                Dialog::NewTracks { count: 1, format: "Mono".into(), kind: "audio".into(), timebase: "samples".into(), name: "Audio".into() },
+                "new_tracks",
+            ),
             (Dialog::NewSession { name: "Test".into(), sample_rate: 48_000, demo: false }, "new_session"),
             (Dialog::Bounce { path: "x.wav".into(), format: "wav".into(), bit_depth: "24".into(), normalize: false }, "bounce"),
             (Dialog::RenameTrack { id: TrackId(1), name: "Track".into() }, "rename_track"),
