@@ -36,10 +36,8 @@ fn midi_session() -> Session {
     let mut session = Session::default();
     let track = session.add_track(TrackKind::Instrument, ChannelFormat::Stereo, None);
     let id = session.new_clip_id();
-    let sequence = Sequence {
-        notes: vec![Note { pitch: 60, velocity: 100, release_velocity: 64, channel: 0, start: 30, length: 120 }],
-        ctrls: Vec::new(),
-    };
+    let sequence =
+        Sequence { notes: vec![Note { pitch: 60, velocity: 100, release_velocity: 64, channel: 0, start: 30, length: 120 }], ctrls: Vec::new() };
     let t = session.track_mut(track).unwrap();
     t.playlist_mut().unwrap().clips.push(Clip::midi(id, "generated-midi", 0, 8_192, sequence));
     let mut instrument = Insert::new("subtractive_synth");
