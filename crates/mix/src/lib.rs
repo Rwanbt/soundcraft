@@ -1288,10 +1288,8 @@ fn apply_instrument_params(slot: &mut PluginSlot, instrument: &soundcraft_model:
         slot.applied = vec![f32::NAN; instrument.params.len()];
     }
     for ((name, value), last) in instrument.params.iter().zip(slot.applied.iter_mut()) {
-        if value.to_bits() != last.to_bits() {
-            if slot.plugin.set_param(name, *value) {
-                *last = *value;
-            }
+        if value.to_bits() != last.to_bits() && slot.plugin.set_param(name, *value) {
+            *last = *value;
         }
     }
 }
@@ -1864,12 +1862,14 @@ mod tests {
         let mut instrument = Insert::new("subtractive_synth");
         instrument.params.insert("level".into(), -12.0);
         s.track_mut(track).unwrap().instrument = Some(instrument);
-        let quiet = render_range(&s, Range::new(0, 4096), 512);
-        let quiet_peak = quiet.iter().flat_map(|ch| ch.iter()).fold(0.0f32, |a, x| a.max(x.abs()));
+        let saved = s.to_json().unwrap();
+        let mut s = Session::from_json(&saved).unwrap();
+        let quiet = render_range(&s, Range::new(0, 16_384), 512);
+        let quiet_peak = quiet.iter().flat_map(|ch| ch.iter().skip(8_192)).fold(0.0f32, |a, x| a.max(x.abs()));
 
         s.track_mut(track).unwrap().instrument.as_mut().unwrap().params.insert("level".into(), -6.0);
-        let loud = render_range(&s, Range::new(0, 4096), 512);
-        let loud_peak = loud.iter().flat_map(|ch| ch.iter()).fold(0.0f32, |a, x| a.max(x.abs()));
+        let loud = render_range(&s, Range::new(0, 16_384), 512);
+        let loud_peak = loud.iter().flat_map(|ch| ch.iter().skip(8_192)).fold(0.0f32, |a, x| a.max(x.abs()));
 
         assert!(quiet_peak > 1e-4, "MIDI note must generate audible signal");
         assert!(loud_peak > quiet_peak * 1.8, "raising the instrument level by 6 dB should raise the bounce peak: {quiet_peak} vs {loud_peak}");
