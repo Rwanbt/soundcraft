@@ -335,7 +335,9 @@ mod tests {
         for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 4.99, 1000.01] {
             assert!(map.set_tempo(480, bad).is_err());
             assert_eq!(map, before);
-            assert!(map.scale_tempos(bad).is_err());
+        }
+        for invalid_factor in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 0.0, 0.01, 100.0] {
+            assert!(map.scale_tempos(invalid_factor).is_err());
             assert_eq!(map, before);
         }
         assert!(map.set_meter(720, 0, 4).is_err());
