@@ -49,7 +49,7 @@ jobs:
       - name: Install llvm-cov runner
         run: cargo install cargo-llvm-cov --locked
       - name: Self-test the coverage evidence policy
-        run: python3 -m unittest discover -s scripts -p 'test_check_coverage.py' -v
+        run: python3 -m unittest discover -s scripts -p 'test_*coverage*.py' -v
       - name: Measure coverage from all unit and integration tests
         run: cargo llvm-cov --workspace --locked --lcov --output-path coverage.lcov
       - name: Coverage report
