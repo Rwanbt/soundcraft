@@ -142,7 +142,7 @@ mod interaction_regressions {
         let events = key
             .map(|key| vec![egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE }])
             .unwrap_or_default();
-        ctx.run_ui(egui::RawInput { events, ..Default::default() }, |_| show(app, ctx));
+        let _ = ctx.run_ui(egui::RawInput { events, ..Default::default() }, |_| show(app, ctx));
     }
 
     #[test]
