@@ -9,6 +9,7 @@ on:
       - 'apps/**'
       - 'scripts/check-coverage.py'
       - 'scripts/test_check_coverage.py'
+      - 'scripts/coverage-inventory.py'
       - 'xtask/**'
       - '.github/workflows/coverage.yml'
   workflow_dispatch:
@@ -52,12 +53,16 @@ jobs:
         run: cargo llvm-cov --workspace --locked --lcov --output-path coverage.lcov
       - name: Coverage report
         run: cargo llvm-cov report --summary-only
+      - name: Publish all-component gap inventory
+        run: python3 scripts/coverage-inventory.py coverage.lcov coverage-inventory.md
       - name: Enforce measured workspace and critical-module coverage floors
         run: python3 scripts/check-coverage.py coverage.lcov
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: soundcraft-llvm-coverage
-          path: coverage.lcov
+          path: |
+            coverage.lcov
+            coverage-inventory.md
           if-no-files-found: ignore
           retention-days: 14
