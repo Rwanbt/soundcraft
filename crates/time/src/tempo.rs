@@ -347,6 +347,16 @@ mod tests {
     }
 
     #[test]
+    fn valid_tempo_scaling_is_applied_to_every_segment() {
+        let mut map = TempoMap::default();
+        map.set_tempo(960, 90.0).unwrap();
+        map.scale_tempos(2.0).unwrap();
+        assert_eq!(map.tempo_at_tick(0), 240.0);
+        assert_eq!(map.tempo_at_tick(960), 180.0);
+        assert_eq!(map.tempos().len(), 2);
+    }
+
+    #[test]
     fn tempo_boundary_is_continuous_and_roundtrips() {
         let mut map = TempoMap::default();
         let sr = SampleRate::HZ_48000;
