@@ -719,7 +719,7 @@ mod modal_rendering_regressions {
         let original = app.engine.session().to_json().unwrap();
         let ctx = egui::Context::default();
         let press = egui::Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE };
-        ctx.run_ui(egui::RawInput { events: vec![press], ..Default::default() }, |_| show(&mut app, &ctx));
+        let _ = ctx.run_ui(egui::RawInput { events: vec![press], ..Default::default() }, |_| show(&mut app, &ctx));
         assert_eq!(app.dialogs.open_name(), None);
         assert_eq!(app.engine.session().to_json().unwrap(), original, "Escape is cancel, not submit");
     }
