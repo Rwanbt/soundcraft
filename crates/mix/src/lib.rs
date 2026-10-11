@@ -176,8 +176,9 @@ struct PluginSlot {
     /// Channel count the plugin was prepared for.
     ch: usize,
     plugin: Box<dyn Plugin>,
-    /// Last values pushed to the plugin, in the insert's parameter-map order.
-    applied: Vec<f32>,
+    /// Last pushed values keyed by the plugin's stable parameter descriptors. Allocated at
+    /// instance creation; edits to a session's parameter map never resize this cache in render.
+    applied: Vec<(&'static str, f32)>,
 }
 
 struct Strip {
@@ -342,7 +343,8 @@ impl SlotCtx<'_> {
             let state = if third { ins.state_bytes() } else { None };
             create_instance(&ins.plugin, state.as_deref(), self.sr, self.mb, ch)
         }?;
-        Some(PluginSlot { id: ins.plugin.clone(), ch, plugin, applied: Vec::new() })
+        let applied = plugin.info().params.iter().map(|p| (p.id, f32::NAN)).collect();
+        Some(PluginSlot { id: ins.plugin.clone(), ch, plugin, applied })
     }
 }
 
@@ -826,6 +828,9 @@ fn process_strip(
         }
         TrackKind::Instrument | TrackKind::Midi => {
             if let Some(inst) = &mut strip.instrument {
+                if let Some(saved) = &t.instrument {
+                    apply_instrument_params(inst, saved);
+                }
                 schedule_notes(s, t, pos, frames, inst, &mut strip.held);
                 if strip.buf.len() >= 2 {
                     inst.plugin.process(&mut strip.buf, frames);
@@ -1278,14 +1283,31 @@ fn schedule_notes(s: &Session, t: &Track, pos: Samples, frames: usize, inst: &mu
     }
 }
 
+/// Push a parameter without allocating, even when the session adds/removes/reorders keys.
+/// Plugins may accept dynamic parameters absent from their declared metadata; for these,
+/// apply the value each block (never cache under an unrelated parameter's index).
+fn apply_cached_param(slot: &mut PluginSlot, name: &str, value: f32) {
+    if let Some((_, last)) = slot.applied.iter_mut().find(|(id, _)| *id == name) {
+        if value.to_bits() != last.to_bits() && slot.plugin.set_param(name, value) {
+            *last = value;
+        }
+    } else {
+        slot.plugin.set_param(name, value);
+    }
+}
+
+/// Restore persisted instrument controls before MIDI rendering, including offline bounces.
+fn apply_instrument_params(slot: &mut PluginSlot, instrument: &soundcraft_model::Insert) {
+    for (name, value) in &instrument.params {
+        apply_cached_param(slot, name, *value);
+    }
+}
+
 fn apply_params(slot: &mut PluginSlot, ins: &soundcraft_model::Insert, t: &Track, i: usize, pos: Samples) {
     let slot_u8 = u8::try_from(i).unwrap_or(0);
     let automated = t.mixer.automation_mode.reads()
         && t.automation.iter().any(|l| matches!(&l.param, AutoParam::Plugin { slot, .. } if *slot == slot_u8) && !l.points.is_empty());
-    if slot.applied.len() != ins.params.len() {
-        slot.applied = vec![f32::NAN; ins.params.len()];
-    }
-    for ((k, v), last) in ins.params.iter().zip(slot.applied.iter_mut()) {
+    for (k, v) in &ins.params {
         let mut val = *v;
         if automated
             && let Some(l) = t.automation.iter().find(|l| matches!(&l.param, AutoParam::Plugin { slot, param } if *slot == slot_u8 && param == k))
@@ -1293,10 +1315,7 @@ fn apply_params(slot: &mut PluginSlot, ins: &soundcraft_model::Insert, t: &Track
         {
             val = l.value_at(pos, val);
         }
-        if val.to_bits() != last.to_bits() {
-            slot.plugin.set_param(k, val);
-            *last = val;
-        }
+        apply_cached_param(slot, k, val);
     }
 }
 
@@ -1810,6 +1829,84 @@ mod tests {
             pl.clips.push(Clip::audio(id, "dc", SourceId(900), 0, 0, frames as i64));
         }
         (s, t)
+    }
+
+    #[test]
+    fn saved_instrument_level_is_applied_to_rendered_plugin() {
+        let mut s = Session::default();
+        let t = s.add_track(TrackKind::Instrument, ChannelFormat::Stereo, None);
+        let mut instrument = Insert::new("subtractive_synth");
+        instrument.params.insert("level".into(), -12.0);
+        s.track_mut(t).unwrap().instrument = Some(instrument);
+
+        let mut mix = MixEngine::new(48_000.0, 512);
+        let mut output = vec![vec![0.0; 512]; 2];
+        mix.render(&s, 0, 512, &mut output);
+        let first = mix.strips.get(&t).unwrap().instrument.as_ref().unwrap().plugin.param("level");
+        assert_eq!(first, Some(-12.0), "saved instrument level must reach DSP");
+
+        s.track_mut(t).unwrap().instrument.as_mut().unwrap().params.insert("level".into(), -18.0);
+        mix.render(&s, 512, 512, &mut output);
+        let updated = mix.strips.get(&t).unwrap().instrument.as_ref().unwrap().plugin.param("level");
+        assert_eq!(updated, Some(-18.0), "changes must update the existing DSP instance");
+    }
+
+    #[test]
+    fn offline_bounce_respects_saved_instrument_level() {
+        let mut s = Session::default();
+        let track = s.add_track(TrackKind::Instrument, ChannelFormat::Stereo, None);
+        let id = s.new_clip_id();
+        let seq = soundcraft_midi::Sequence {
+            notes: vec![soundcraft_midi::Note { pitch: 60, velocity: 100, release_velocity: 64, channel: 0, start: 0, length: 960 }],
+            ctrls: Vec::new(),
+        };
+        s.track_mut(track).unwrap().playlist_mut().unwrap().clips.push(Clip::midi(id, "note", 0, 48_000, seq));
+
+        let mut instrument = Insert::new("subtractive_synth");
+        instrument.params.insert("level".into(), -12.0);
+        s.track_mut(track).unwrap().instrument = Some(instrument);
+        let saved = s.to_json().unwrap();
+        let mut s = Session::from_json(&saved).unwrap();
+        let quiet = render_range(&s, Range::new(0, 16_384), 512);
+        let quiet_peak = quiet.iter().flat_map(|ch| ch.iter().skip(8_192)).fold(0.0f32, |a, x| a.max(x.abs()));
+
+        s.track_mut(track).unwrap().instrument.as_mut().unwrap().params.insert("level".into(), -6.0);
+        let loud = render_range(&s, Range::new(0, 16_384), 512);
+        let loud_peak = loud.iter().flat_map(|ch| ch.iter().skip(8_192)).fold(0.0f32, |a, x| a.max(x.abs()));
+
+        assert!(quiet_peak > 1e-4, "MIDI note must generate audible signal");
+        assert!(loud_peak > quiet_peak * 1.8, "raising the instrument level by 6 dB should raise the bounce peak: {quiet_peak} vs {loud_peak}");
+    }
+
+    #[test]
+    fn instrument_parameter_map_edits_do_not_resize_the_audio_cache() {
+        let mut s = Session::default();
+        let track = s.add_track(TrackKind::Instrument, ChannelFormat::Stereo, None);
+        let mut instrument = Insert::new("subtractive_synth");
+        instrument.params.insert("level".into(), -12.0);
+        s.track_mut(track).unwrap().instrument = Some(instrument);
+        let mut mix = MixEngine::new(48_000.0, 512);
+        let mut out = vec![vec![0.0; 512]; 2];
+        mix.render(&s, 0, 512, &mut out);
+        let slot = mix.strips.get(&track).unwrap().instrument.as_ref().unwrap();
+        let cache_ptr = slot.applied.as_ptr();
+        let cache_len = slot.applied.len();
+        assert_eq!(slot.plugin.param("level"), Some(-12.0));
+
+        let params = &mut s.track_mut(track).unwrap().instrument.as_mut().unwrap().params;
+        params.remove("level");
+        params.insert("cutoff".into(), 900.0);
+        mix.render(&s, 512, 512, &mut out);
+        let slot = mix.strips.get(&track).unwrap().instrument.as_ref().unwrap();
+        assert_eq!(slot.applied.as_ptr(), cache_ptr, "parameter cache must remain allocated when keys change");
+        assert_eq!(slot.applied.len(), cache_len);
+        assert_eq!(slot.plugin.param("cutoff"), Some(900.0), "new key must be applied by name");
+
+        s.track_mut(track).unwrap().instrument.as_mut().unwrap().params.insert("level".into(), -18.0);
+        mix.render(&s, 1024, 512, &mut out);
+        let slot = mix.strips.get(&track).unwrap().instrument.as_ref().unwrap();
+        assert_eq!(slot.applied.as_ptr(), cache_ptr);
+        assert_eq!(slot.plugin.param("level"), Some(-18.0));
     }
 
     #[test]
