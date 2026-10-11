@@ -388,6 +388,36 @@ mod tests {
     }
 
     #[test]
+    fn meter_change_snaps_to_prior_bar_and_replaces_event() {
+        let mut map = TempoMap::default();
+        map.set_meter(4_000, 3, 4).unwrap();
+        assert_eq!(map.meters()[1].tick, 3_840);
+        assert_eq!(map.bar_beat_at_tick(3_840), BarBeat { bar: 2, beat: 1, tick: 0 });
+        map.set_meter(4_100, 6, 8).unwrap();
+        assert_eq!(map.meters().len(), 2);
+        assert_eq!(map.meters()[1], MeterEvent { tick: 3_840, numerator: 6, denominator: 8 });
+        assert_eq!(map.bar_start_tick(3), 6_720);
+        assert!(map.remove_meter(3_840));
+        assert!(!map.remove_meter(3_840));
+        assert!(!map.remove_meter(0));
+    }
+
+    #[test]
+    fn bar_beat_roundtrips_across_supported_meters() {
+        for denominator in [1, 2, 4, 8, 16, 32, 64] {
+            for numerator in [1, 3, 4, 7, 64] {
+                let map = TempoMap::new(120.0, numerator, denominator).unwrap();
+                for bar in 1..=6 {
+                    for beat in 1..=numerator as i64 {
+                        let bb = BarBeat { bar, beat, tick: 0 };
+                        assert_eq!(map.bar_beat_at_tick(map.tick_at_bar_beat(bb)), bb);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn negative_positions() {
         let m = TempoMap::default();
         assert_eq!(m.bar_beat_at_tick(-TICKS_PER_QUARTER * 4), BarBeat { bar: 0, beat: 1, tick: 0 });
