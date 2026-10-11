@@ -1856,14 +1856,7 @@ mod tests {
         let track = s.add_track(TrackKind::Instrument, ChannelFormat::Stereo, None);
         let id = s.new_clip_id();
         let seq = soundcraft_midi::Sequence {
-            notes: vec![soundcraft_midi::Note {
-                pitch: 60,
-                velocity: 100,
-                release_velocity: 64,
-                channel: 0,
-                start: 0,
-                length: 960,
-            }],
+            notes: vec![soundcraft_midi::Note { pitch: 60, velocity: 100, release_velocity: 64, channel: 0, start: 0, length: 960 }],
             ctrls: Vec::new(),
         };
         s.track_mut(track).unwrap().playlist_mut().unwrap().clips.push(Clip::midi(id, "note", 0, 48_000, seq));
@@ -1879,10 +1872,7 @@ mod tests {
         let loud_peak = loud.iter().flat_map(|ch| ch.iter()).fold(0.0f32, |a, x| a.max(x.abs()));
 
         assert!(quiet_peak > 1e-4, "MIDI note must generate audible signal");
-        assert!(
-            loud_peak > quiet_peak * 1.8,
-            "raising the instrument level by 6 dB should raise the bounce peak: {quiet_peak} vs {loud_peak}"
-        );
+        assert!(loud_peak > quiet_peak * 1.8, "raising the instrument level by 6 dB should raise the bounce peak: {quiet_peak} vs {loud_peak}");
     }
 
     #[test]
