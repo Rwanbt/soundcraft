@@ -56,8 +56,8 @@ class LcovEvidenceTests(unittest.TestCase):
 
     def test_duplicate_coverage_counters_are_rejected(self) -> None:
         for text, expected in (
-            ("SF:src/a.rs\\nLF:10\\nLF:20\\nLH:5\\nend_of_record\\n", "duplicate LF"),
-            ("SF:src/a.rs\\nLF:10\\nLH:5\\nLH:6\\nend_of_record\\n", "duplicate LH"),
+            ("SF:src/a.rs\nLF:10\nLF:20\nLH:5\nend_of_record\n", "duplicate LF"),
+            ("SF:src/a.rs\nLF:10\nLH:5\nLH:6\nend_of_record\n", "duplicate LH"),
         ):
             with self.subTest(expected=expected):
                 with self.assertRaisesRegex(ValueError, expected):
@@ -67,7 +67,7 @@ class LcovEvidenceTests(unittest.TestCase):
         for line in ("LF:10", "LH:5"):
             with self.subTest(line=line):
                 with self.assertRaisesRegex(ValueError, "outside source record"):
-                    read_lcov(self.write(line + "\\n"))
+                    read_lcov(self.write(line + "\n"))
 
     def test_empty_instrumentation_is_rejected(self) -> None:
         path = self.write("SF:src/empty.rs\nLF:0\nLH:0\nend_of_record\n")
