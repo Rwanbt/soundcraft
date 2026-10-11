@@ -9,6 +9,7 @@ on:
       - 'apps/**'
       - 'scripts/check-coverage.py'
       - 'scripts/test_check_coverage.py'
+      - 'scripts/test_coverage_inventory.py'
       - 'scripts/coverage-inventory.py'
       - 'xtask/**'
       - '.github/workflows/coverage.yml'
