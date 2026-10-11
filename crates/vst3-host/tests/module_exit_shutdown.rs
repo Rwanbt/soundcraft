@@ -38,7 +38,19 @@ fn main() {
     assert!(up_front.status.success(), "shutdown before exit: {:?}\n{}", up_front.status, String::from_utf8_lossy(&up_front.stderr));
     let too_late = run("exit-handler");
     let err = String::from_utf8_lossy(&too_late.stderr);
-    assert_eq!(too_late.status.code(), Some(3), "the exit handler alone comes too late: {err}");
-    assert!(err.contains("module exit after the process exit tore down state"), "{err}");
+    // Windows/MSVC executes the host EXE's atexit hooks before a loaded DLL's CRT
+    // teardown, unlike the Unix ordering exercised by this negative control. On
+    // Windows the fallback exit handler can therefore run while the DLL state is
+    // still valid. Both platforms must still pass the explicit shutdown case above.
+    #[cfg(windows)]
+    {
+        assert!(too_late.status.success(), "Windows exit hook failed: {:?}\\n{err}", too_late.status);
+        assert!(!err.contains("host contract violation"), "{err}");
+    }
+    #[cfg(not(windows))]
+    {
+        assert_eq!(too_late.status.code(), Some(3), "the exit handler alone comes too late: {err}");
+        assert!(err.contains("module exit after the process exit tore down state"), "{err}");
+    }
     println!("module_exit_shutdown: ok");
 }
