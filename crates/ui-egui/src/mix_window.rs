@@ -695,3 +695,44 @@ fn route_menu(app: &mut SoundApp, ui: &mut Ui, id: TrackId, input: bool) {
         }
     });
 }
+
+#[cfg(test)]
+mod rendering_regressions {
+    use super::*;
+    use crate::Services;
+
+    fn render_mix(views: &[&str], narrow: bool) -> usize {
+        let mut app = SoundApp::new(soundcraft_engine::demo::demo_engine(), None, Services::default());
+        app.ui.narrow_mix = narrow;
+        app.ui.mix_views = views.iter().map(|v| (*v).to_string()).collect();
+        let before = app.engine.session().to_json().unwrap();
+        let ctx = egui::Context::default();
+        crate::fonts::install(&ctx);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| content(&mut app, ui));
+        let painted = output.shapes.len();
+        output.textures_delta.clear();
+        assert_eq!(app.engine.session().to_json().unwrap(), before, "drawing the mixer must never change project state");
+        painted
+    }
+
+    #[test]
+    fn full_and_narrow_mix_layouts_render_real_demo_tracks_without_mutation() {
+        assert_eq!(strip_width(false), 98.0);
+        assert_eq!(strip_width(true), 64.0);
+        for (views, narrow) in [(vec!["inserts_ae", "sends_ae", "io", "color"], false), (vec!["all"], false), (vec!["all"], true), (vec!["io"], true)]
+        {
+            let n = render_mix(&views, narrow);
+            assert!(n > 0, "mixer should paint content with views {views:?} narrow={narrow}");
+        }
+    }
+
+    #[test]
+    fn stereo_panner_and_main_output_format_have_correct_routing() {
+        let app = SoundApp::new(soundcraft_engine::demo::demo_engine(), None, Services::default());
+        let track = app.engine.session().track_by_name("Kick").unwrap();
+        assert_eq!(output_format(&app, track), app.engine.session().main_format());
+        let panner = panner_speakers(ChannelFormat::Stereo);
+        assert_eq!(panner.len(), 2);
+        assert!(panner.iter().all(|p| p.x.is_finite() && p.y.is_finite()));
+    }
+}
