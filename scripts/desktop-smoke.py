@@ -94,7 +94,17 @@ def main():
             if not isinstance(command_list, list) or not command_list:
                 raise RuntimeError("desktop command catalog is empty")
             print(f"PASS real desktop startup on 127.0.0.1:{port}; tracks={len(session['tracks'])}; commands={len(command_list)}")
-            request(conn, "app.quit", 4)
+            baseline = len(session["tracks"])
+            request(conn, "engine.execute", 4, {"command": "track.new", "params": {"count": 1, "name": "E2E Recording Track"}})
+            modified = request(conn, "session.inspect", 5)
+            if len(modified.get("tracks", [])) != baseline + 1:
+                raise RuntimeError("native desktop command did not create exactly one track")
+            request(conn, "engine.execute", 6, {"command": "edit.undo", "params": {}})
+            restored = request(conn, "session.inspect", 7)
+            if len(restored.get("tracks", [])) != baseline:
+                raise RuntimeError("native desktop undo did not restore the original track count")
+            print("PASS real desktop engine command -> session inspect -> undo roundtrip")
+            request(conn, "app.quit", 8)
 
         try:
             exit_code = proc.wait(timeout=30)
