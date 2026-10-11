@@ -169,7 +169,14 @@ mod rendering_regressions {
     }
 
     fn frame(app: &mut SoundApp, ctx: &egui::Context) -> usize {
-        ctx.run_ui(egui::RawInput::default(), |_| show(app, ctx)).shapes.len()
+        // Match real application startup: the custom bold family must be bound
+        // before score labels are laid out. Consume the virtual renderer's
+        // texture delta explicitly so egui doesn't treat it as a lost GPU update.
+        crate::fonts::install(ctx);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |_| show(app, ctx));
+        let drawn = output.shapes.len();
+        output.textures_delta.clear();
+        drawn
     }
 
     #[test]
