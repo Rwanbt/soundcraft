@@ -103,7 +103,7 @@ impl Range {
         s >= self.start && s < self.end
     }
     pub fn overlaps(&self, o: &Range) -> bool {
-        self.start < o.end && o.start < self.end
+        !self.is_empty() && !o.is_empty() && self.start < o.end && o.start < self.end
     }
     pub fn intersect(&self, o: &Range) -> Option<Range> {
         let s = self.start.max(o.start);
@@ -138,6 +138,41 @@ mod tests {
         assert_eq!(to_samples(f64::NAN), 0);
         assert_eq!(to_samples(f64::INFINITY), i64::MAX);
         assert_eq!(to_samples(f64::NEG_INFINITY), i64::MIN);
+    }
+
+    #[test]
+    fn rounding_and_saturation_at_sample_boundaries() {
+        assert_eq!(to_samples(0.49), 0);
+        assert_eq!(to_samples(0.5), 1);
+        assert_eq!(to_samples(-0.5), -1);
+        assert_eq!(to_samples(f64::MAX), i64::MAX);
+        assert_eq!(to_samples(-f64::MAX), i64::MIN);
+        assert_eq!(SampleRate::HZ_48000.samples(f64::NAN), 0);
+        assert_eq!(SampleRate::HZ_48000.samples(f64::INFINITY), i64::MAX);
+    }
+
+    #[test]
+    fn ranges_are_half_open_and_saturate_without_wrapping() {
+        let empty = Range::point(42);
+        assert!(empty.is_empty());
+        assert!(!empty.contains(42));
+        assert!(!empty.overlaps(&Range::new(40, 50)));
+
+        let a = Range::new(i64::MIN, i64::MAX);
+        assert_eq!(a.len(), i64::MAX);
+        assert!(a.contains(i64::MIN));
+        assert!(!a.contains(i64::MAX));
+        assert_eq!(a.shifted(1), Range { start: i64::MIN + 1, end: i64::MAX });
+        assert_eq!(Range::new(i64::MAX - 2, i64::MAX).shifted(100), Range::point(i64::MAX));
+        assert_eq!(Range::new(i64::MIN, i64::MIN + 2).shifted(-100), Range::point(i64::MIN));
+    }
+
+    #[test]
+    fn sample_rate_validates_inclusive_limits() {
+        assert_eq!(SampleRate::new(8_000).map(SampleRate::hz), Ok(8_000));
+        assert_eq!(SampleRate::new(768_000).map(SampleRate::hz), Ok(768_000));
+        assert!(SampleRate::new(7_999).is_err());
+        assert!(SampleRate::new(768_001).is_err());
     }
 
     #[test]
