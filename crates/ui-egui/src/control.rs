@@ -307,3 +307,203 @@ mod tests {
         assert_eq!(super::base64(b"M"), "TQ==");
     }
 }
+
+#[cfg(test)]
+mod protocol_regressions {
+    use super::*;
+    use crate::Services;
+
+    fn app() -> SoundApp {
+        SoundApp::new(soundcraft_engine::demo::demo_engine(), None, Services::default())
+    }
+
+    fn call(app: &mut SoundApp, ctx: &egui::Context, method: &str, params: Value) -> Value {
+        let (request, _receiver) = ControlRequest::new(method, params);
+        handle(app, ctx, &request).unwrap()
+    }
+
+    #[test]
+    fn key_aliases_and_unknown_keys_are_distinguished() {
+        for (name, key) in [
+            ("space", egui::Key::Space),
+            ("enter", egui::Key::Enter),
+            ("return", egui::Key::Enter),
+            ("escape", egui::Key::Escape),
+            ("esc", egui::Key::Escape),
+            ("tab", egui::Key::Tab),
+            ("home", egui::Key::Home),
+            ("end", egui::Key::End),
+            ("=", egui::Key::Equals),
+        ] {
+            assert_eq!(key_from(name), Some(key), "{name}");
+        }
+        assert_eq!(key_from("not-a-key"), None);
+    }
+
+    #[test]
+    fn modifier_aliases_respect_host_command_mapping() {
+        let m = mods(&json!({"command": true, "shift": true, "alt": true}));
+        assert!(m.command && m.shift && m.alt);
+        assert_eq!(m.mac_cmd, cfg!(target_os = "macos"));
+        assert_eq!(m.ctrl, !cfg!(target_os = "macos"));
+        let m = mods(&json!({"ctrl": true, "cmd": false}));
+        assert!(m.ctrl);
+        assert!(!m.command && !m.mac_cmd);
+        assert_eq!(mods(&json!({})), egui::Modifiers::NONE);
+    }
+
+    #[test]
+    fn command_queries_and_unknown_methods_return_structured_results() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let s = call(&mut app, &ctx, "session.inspect", json!({}));
+        let a = call(&mut app, &ctx, "document.inspect", json!({}));
+        assert_eq!(s, a);
+        assert_eq!(s["ok"], true);
+        assert_eq!(call(&mut app, &ctx, "engine.parity", json!({}))["ok"], true);
+        assert_eq!(call(&mut app, &ctx, "engine.commands", json!({}))["ok"], true);
+        assert_eq!(call(&mut app, &ctx, "ui.menu.list", json!({}))["ok"], true);
+        let invalid = call(&mut app, &ctx, "not.a.command", json!({}));
+        assert_eq!(invalid["ok"], false);
+        assert!(invalid["error"].as_str().unwrap().contains("unknown method"));
+        assert_eq!(call(&mut app, &ctx, "ui.menu.invoke", json!({"path": "__invalid__"}))["ok"], false);
+    }
+
+    #[test]
+    fn engine_aliases_execute_commands_and_surface_errors() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let before = app.engine.session().tracks.len();
+        let out = call(&mut app, &ctx, "engine.execute", json!({"command": "track.new", "params": {"count": 1}}));
+        assert_eq!(out["ok"], true, "{out}");
+        assert_eq!(app.engine.session().tracks.len(), before + 1);
+        let out = call(&mut app, &ctx, "command", json!({"id": "track.new", "params": {"count": 1}}));
+        assert_eq!(out["ok"], true, "{out}");
+        assert_eq!(app.engine.session().tracks.len(), before + 2);
+        let out = call(&mut app, &ctx, "engine.execute", json!({"command": "__invalid__"}));
+        assert_eq!(out["ok"], false);
+    }
+
+    #[test]
+    fn synthetic_clicks_have_exact_press_release_pairs_and_bounded_counts() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        assert_eq!(call(&mut app, &ctx, "ui.click", json!({"x": 12.0, "y": 28.0, "count": 2, "button": "right", "shift": true}))["ok"], true);
+        assert_eq!(app.synthetic.len(), 5);
+        assert!(matches!(app.synthetic[0], egui::Event::PointerMoved(p) if p == egui::pos2(12.0, 28.0)));
+        for (i, pressed) in [(1, true), (2, false), (3, true), (4, false)] {
+            assert!(matches!(&app.synthetic[i],
+                egui::Event::PointerButton { button: egui::PointerButton::Secondary, pressed: v, modifiers, .. }
+                    if *v == pressed && modifiers.shift));
+        }
+        app.synthetic.clear();
+        let _ = call(&mut app, &ctx, "ui.click", json!({"count": 1000000}));
+        assert_eq!(app.synthetic.len(), 7, "click count is capped at three");
+        app.synthetic.clear();
+        let _ = call(&mut app, &ctx, "ui.click", json!({"count": 0}));
+        assert_eq!(app.synthetic.len(), 3, "a zero-count request is normalized to one click");
+    }
+
+    #[test]
+    fn synthetic_drag_moves_in_order_and_caps_path_steps() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        assert_eq!(call(&mut app, &ctx, "ui.drag", json!({"x": 0.0, "y": 0.0, "to_x": 8.0, "to_y": 4.0, "steps": 2}))["ok"], true);
+        assert_eq!(app.synthetic.len(), 5);
+        assert!(matches!(app.synthetic[2], egui::Event::PointerMoved(p) if p == egui::pos2(4.0, 2.0)));
+        assert!(matches!(app.synthetic[3], egui::Event::PointerMoved(p) if p == egui::pos2(8.0, 4.0)));
+        assert!(matches!(app.synthetic[4], egui::Event::PointerButton { pressed: false, .. }));
+        app.synthetic.clear();
+        let _ = call(&mut app, &ctx, "ui.drag", json!({"steps": 1000000}));
+        assert_eq!(app.synthetic.len(), 203, "drag steps are bounded to 200");
+        app.synthetic.clear();
+        let _ = call(&mut app, &ctx, "ui.drag", json!({"steps": 0}));
+        assert_eq!(app.synthetic.len(), 4, "zero steps are normalized to one");
+    }
+
+    #[test]
+    fn key_text_move_and_ui_inspect_work_without_a_native_window() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        assert_eq!(call(&mut app, &ctx, "ui.move", json!({"x": 3, "y": 4}))["ok"], true);
+        assert_eq!(call(&mut app, &ctx, "ui.text", json!({"text": "é漢🙂"}))["ok"], true);
+        assert_eq!(call(&mut app, &ctx, "ui.key", json!({"key": "space", "shift": true}))["ok"], true);
+        assert!(matches!(app.synthetic[0], egui::Event::PointerMoved(p) if p == egui::pos2(3.0,4.0)));
+        assert!(matches!(&app.synthetic[1], egui::Event::Text(t) if t == "é漢🙂"));
+        assert!(matches!(&app.synthetic[2], egui::Event::Key { key: egui::Key::Space, pressed: true, modifiers, .. } if modifiers.shift));
+        assert!(matches!(&app.synthetic[3], egui::Event::Key { key: egui::Key::Space, pressed: false, .. }));
+        let count = app.synthetic.len();
+        let invalid = call(&mut app, &ctx, "ui.key", json!({"key": "invalid-key-name"}));
+        assert_eq!(invalid["ok"], false);
+        assert_eq!(app.synthetic.len(), count, "invalid keys cannot enqueue input");
+        let inspect = call(&mut app, &ctx, "ui.inspect", json!({}));
+        assert_eq!(inspect["ok"], true);
+        assert!(inspect["result"].get("edit_layout").is_some());
+    }
+
+    #[test]
+    fn requests_are_drained_in_bounded_batches_without_losses() {
+        let (tx, rx) = channel();
+        let mut app = app().with_control(rx);
+        let ctx = egui::Context::default();
+        let mut responses = Vec::new();
+        for i in 0..80 {
+            let (req, reply) = ControlRequest::new("ui.move", json!({"x": i, "y": 1}));
+            tx.send(req).unwrap();
+            responses.push(reply);
+        }
+        drain(&mut app, &ctx);
+        assert_eq!(app.synthetic.len(), 65, "at most 65 requests are drained per frame");
+        for (i, reply) in responses.iter().enumerate() {
+            assert_eq!(reply.try_recv().is_ok(), i < 65, "batch boundary request {i}");
+        }
+        drain(&mut app, &ctx);
+        assert_eq!(app.synthetic.len(), 80, "remaining requests are not lost");
+        for reply in responses.iter().skip(65) {
+            assert_eq!(reply.try_recv().unwrap()["ok"], true);
+        }
+    }
+
+    #[test]
+    fn screenshot_requests_are_deferred_and_fail_cleanly_without_frames() {
+        let (tx, rx) = channel();
+        let mut app = app().with_control(rx);
+        let ctx = egui::Context::default();
+        let (req, reply) = ControlRequest::new("ui.screenshot", json!({}));
+        tx.send(req).unwrap();
+        drain(&mut app, &ctx);
+        assert_eq!(app.pending_shots.len(), 1);
+        assert!(reply.try_recv().is_err(), "screenshot cannot respond before a frame exists");
+        collect_screenshots(&mut app, &ctx);
+        assert_eq!(app.pending_shots.len(), 1);
+        app.pending_shots[0].frames = 600;
+        collect_screenshots(&mut app, &ctx);
+        assert!(app.pending_shots.is_empty());
+        let response = reply.try_recv().unwrap();
+        assert_eq!(response["ok"], false);
+        assert!(response["error"].as_str().unwrap().contains("no frame was presented"));
+    }
+
+    #[test]
+    fn tiny_rgba_screenshots_are_valid_pngs_and_base64() {
+        let img = egui::ColorImage::from_rgba_unmultiplied([2, 1], &[255, 0, 0, 255, 0, 255, 0, 255]);
+        let bytes = png_bytes(&img).unwrap();
+        assert!(bytes.starts_with(&[137, 80, 78, 71, 13, 10, 26, 10]));
+        let output = encode(&img, None);
+        assert_eq!(output["ok"], true);
+        assert_eq!(output["result"]["width"], 2);
+        assert_eq!(output["result"]["height"], 1);
+        assert!(output["result"]["png_base64"].as_str().unwrap().starts_with("iVBORw0KGgo"));
+        let fail = encode(&img, Some("/__soundcraft_missing_parent__/invalid.png"));
+        assert_eq!(fail["ok"], false, "invalid paths must fail without crashing");
+    }
+
+    #[test]
+    fn quit_is_explicit_and_does_not_require_a_ui_event_loop() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        assert!(!app.quit_requested);
+        assert_eq!(call(&mut app, &ctx, "app.quit", json!({}))["ok"], true);
+        assert!(app.quit_requested);
+    }
+}
