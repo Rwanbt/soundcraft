@@ -7,6 +7,7 @@ on:
       - 'Cargo.lock'
       - 'crates/**'
       - 'apps/**'
+      - 'scripts/check-coverage.py'
       - 'xtask/**'
       - '.github/workflows/coverage.yml'
   workflow_dispatch:
@@ -48,21 +49,8 @@ jobs:
         run: cargo llvm-cov --workspace --locked --lcov --output-path coverage.lcov
       - name: Coverage report
         run: cargo llvm-cov report --summary-only
-      - name: Enforce conservative line-coverage regression floor
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          lines = Path("coverage.lcov").read_text(encoding="utf-8").splitlines()
-          total = sum(int(line[3:]) for line in lines if line.startswith("LF:"))
-          covered = sum(int(line[3:]) for line in lines if line.startswith("LH:"))
-          if total == 0:
-              raise SystemExit("Coverage artifact has no line records")
-          ratio = 100 * covered / total
-          print(f"Workspace lines: {covered}/{total} = {ratio:.2f}% (minimum 70.00%)")
-          if ratio < 70.0:
-              raise SystemExit(f"Line coverage regression: {ratio:.2f}% is below 70.00%")
-          PY
+      - name: Enforce measured workspace and critical-module coverage floors
+        run: python3 scripts/check-coverage.py coverage.lcov
       - uses: actions/upload-artifact@v4
         if: always()
         with:
