@@ -69,6 +69,18 @@ class LcovEvidenceTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "outside source record"):
                     read_lcov(self.write(line + "\n"))
 
+    def test_source_path_must_not_be_empty(self) -> None:
+        with self.assertRaisesRegex(ValueError, "empty source path"):
+            read_lcov(self.write("SF:\nLF:1\nLH:1\nend_of_record\n"))
+
+    def test_orphan_record_terminator_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "orphan end_of_record"):
+            read_lcov(self.write("end_of_record\n"))
+        with self.assertRaisesRegex(ValueError, "orphan end_of_record"):
+            read_lcov(self.write(
+                "SF:src/a.rs\nLF:1\nLH:1\nend_of_record\nend_of_record\n"
+            ))
+
     def test_empty_instrumentation_is_rejected(self) -> None:
         path = self.write("SF:src/empty.rs\nLF:0\nLH:0\nend_of_record\n")
         with self.assertRaisesRegex(ValueError, "zero instrumented lines"):
