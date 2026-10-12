@@ -174,3 +174,23 @@ fn failed_open_of_corrupted_session_keeps_pending_edits_and_active_file() {
     assert!(engine.is_dirty());
     assert!(engine.session().track_by_name("Pending").is_some());
 }
+
+#[test]
+fn replacing_an_autosave_with_a_different_session_does_not_reuse_stale_audio() {
+    let dir = Scratch::new();
+    let path = dir.path("recovery.scraft");
+
+    let mut first = Engine::default();
+    let first_id = add_audio(&mut first, "Shared name", 0.25);
+    assert_eq!(io::save_copy(&first, text(&path)).unwrap(), 1);
+
+    let mut replacement = Engine::default();
+    let second_id = add_audio(&mut replacement, "Shared name", -0.5);
+    assert_eq!(first_id, second_id, "different sessions can legally allocate the same numeric source ID");
+    assert_eq!(io::save_copy(&replacement, text(&path)).unwrap(), 1, "changed audio must not be mistaken for the earlier source");
+
+    let mut restored = Engine::default();
+    assert!(io::open_session(&mut restored, text(&path)).unwrap().is_empty());
+    assert_eq!(restored.session().pool.get(second_id).unwrap().buffer.channels[0], vec![-0.5; 64]);
+    assert_eq!(io::save_copy(&replacement, text(&path)).unwrap(), 0, "identical audio should still be reused");
+}
