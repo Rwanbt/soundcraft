@@ -304,6 +304,9 @@ pub fn annexb_nals(data: &[u8]) -> Vec<&[u8]> {
 
 /// Split a length-prefixed sample (AVCC/HVCC, `length_size` 1/2/4 bytes) into NAL units.
 pub fn length_prefixed_nals(data: &[u8], length_size: usize) -> Result<Vec<&[u8]>> {
+    if !matches!(length_size, 1 | 2 | 4) {
+        return Err(BitError::Eof);
+    }
     let mut out = Vec::new();
     let mut i = 0;
     while i < data.len() {
@@ -399,6 +402,17 @@ mod tests {
         assert!(r.more_rbsp_data());
         r.read_bit().unwrap();
         assert!(!r.more_rbsp_data());
+    }
+
+    #[test]
+    fn length_prefixed_nals_reject_invalid_prefix_widths_without_looping() {
+        for width in [0, 3, 5, usize::MAX] {
+            assert_eq!(length_prefixed_nals(&[], width), Err(BitError::Eof), "width {width}");
+            assert_eq!(length_prefixed_nals(&[0, 0, 0, 1, 0x65], width), Err(BitError::Eof), "width {width}");
+        }
+        assert!(length_prefixed_nals(&[], 1).unwrap().is_empty());
+        assert!(length_prefixed_nals(&[], 2).unwrap().is_empty());
+        assert!(length_prefixed_nals(&[], 4).unwrap().is_empty());
     }
 
     #[test]
