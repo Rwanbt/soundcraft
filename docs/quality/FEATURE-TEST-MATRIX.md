@@ -57,6 +57,15 @@ listed here corresponds to the PR's actual HEAD SHA.
 | [#66](https://github.com/Rwanbt/soundcraft/pull/66) | `96b7bff9` | [success](https://github.com/Rwanbt/soundcraft/actions/runs/38313570703) | [success](https://github.com/Rwanbt/soundcraft/actions/runs/38313570794) | [Chromium success](https://github.com/Rwanbt/soundcraft/actions/runs/38313570700) | Correlated TCP replies and at-most-once client dispatch |
 | [#67](https://github.com/Rwanbt/soundcraft/pull/67) | `741740fc` | [success](https://github.com/Rwanbt/soundcraft/actions/runs/38313734760) | [success](https://github.com/Rwanbt/soundcraft/actions/runs/38313734754) | [Chromium success](https://github.com/Rwanbt/soundcraft/actions/runs/38313734751) | Bounded MCP JSON-RPC input and batch errors |
 
+Additional LLVM snapshots (do not sum them): PR #66 at `96b7bff9` measured
+**35,797 / 46,947 lines = 76.25%** globally, with
+`crates/automation/src/lib.rs` **90 / 107 lines = 84.11%**.
+PR #67 at `741740fc` measured **35,798 / 46,975 lines = 76.21%**
+globally, with `crates/automation/src/mcp.rs`
+**200 / 231 lines = 86.58%**.
+These values are independently instrumented on distinct branches, not a
+combined result or a comparable fixed-denominator global trend.
+
 PR #63 is a documentation-only evidence update, without triggered Rust test workflows.
 All listed PRs remain **DRAFT**, are based on the unmodified fork `main`
 (except explicitly stacked later PRs), and have not been merged. Platform checks
