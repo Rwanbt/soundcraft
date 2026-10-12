@@ -483,7 +483,7 @@ fn write_session(session: &Session, path: &str, overwrite: bool) -> Result<(Sess
     for src in &mut s.sources {
         let rel_target = format!("Audio Files/{}.wav", sanitize_name(&src.name));
         let exists_rel = !Path::new(&src.path).is_absolute() && dir.join(&src.path).exists();
-        if exists_rel && !src.unsaved {
+        if exists_rel && !src.unsaved && !overwrite {
             continue;
         }
         let Some(audio) = s.pool.get(src.id) else { continue };
@@ -492,11 +492,6 @@ fn write_session(session: &Session, path: &str, overwrite: bool) -> Result<(Sess
         if overwrite {
             // One file per source id so autosaves never collide or pile up.
             target = format!("Audio Files/{}_{}.wav", sanitize_name(&src.name), src.id.0);
-            if dir.join(&target).exists() {
-                src.path = target;
-                src.unsaved = false;
-                continue;
-            }
         } else {
             let mut k = 1;
             // An unsaved source must never overwrite a pre-existing media file, even when
@@ -511,7 +506,14 @@ fn write_session(session: &Session, path: &str, overwrite: bool) -> Result<(Sess
         }
         let opts = EncodeOptions { format: FileFormat::Wav, bit_depth: soundcraft_audio_io::BitDepth::Float32, dither: false, bwf: None };
         let bytes = soundcraft_audio_io::encode(&audio.buffer, &opts).map_err(|err| EngineError::Io(err.to_string()))?;
-        std::fs::write(dir.join(&target), bytes).map_err(|err| EngineError::Io(format!("{target}: {err}")))?;
+        let destination = dir.join(&target);
+        if overwrite && std::fs::read(&destination).is_ok_and(|previous| previous == bytes) {
+            src.path = target;
+            src.unsaved = false;
+            src.format = FileFormat::Wav;
+            continue;
+        }
+        std::fs::write(&destination, bytes).map_err(|err| EngineError::Io(format!("{target}: {err}")))?;
         src.path = target;
         src.unsaved = false;
         src.format = FileFormat::Wav;
