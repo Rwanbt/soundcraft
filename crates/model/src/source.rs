@@ -124,7 +124,7 @@ mod tests {
         let mut pool = SourcePool::default();
         assert!(pool.is_empty());
         assert_eq!(pool.len(), 0);
-        assert_eq!(pool.get(SourceId(11)), None);
+        assert!(pool.get(SourceId(11)).is_none());
         let first = audio(vec![vec![0.1, 0.2]]);
         let second = audio(vec![vec![0.3, 0.4]]);
         let replacement = audio(vec![vec![0.5, 0.6]]);
