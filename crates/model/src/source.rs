@@ -164,10 +164,7 @@ mod tests {
 
     #[test]
     fn decoded_source_reports_shortest_channel_and_safe_channel_views() {
-        let source = SourceAudio::new(AudioBuffer {
-            sample_rate: 44_100,
-            channels: vec![vec![1.0, 2.0, 3.0], vec![4.0, 5.0]],
-        });
+        let source = SourceAudio::new(AudioBuffer { sample_rate: 44_100, channels: vec![vec![1.0, 2.0, 3.0], vec![4.0, 5.0]] });
         assert_eq!(source.frames(), 2);
         assert_eq!(source.channel(0), Some(&[1.0, 2.0, 3.0][..]));
         assert_eq!(source.channel(1), Some(&[4.0, 5.0][..]));
@@ -179,8 +176,14 @@ mod tests {
     #[test]
     fn video_aspect_uses_default_for_missing_dimensions() {
         let mut video = VideoSource {
-            id: SourceId(4), name: "Picture".into(), path: "video.mov".into(),
-            width: 1920, height: 1080, frame_rate: 24.0, duration: 12.0, codec: "prores".into(),
+            id: SourceId(4),
+            name: "Picture".into(),
+            path: "video.mov".into(),
+            width: 1920,
+            height: 1080,
+            frame_rate: 24.0,
+            duration: 12.0,
+            codec: "prores".into(),
         };
         assert_eq!(video.aspect(), 16.0 / 9.0);
         video.width = 0;
