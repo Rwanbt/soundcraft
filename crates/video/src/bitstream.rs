@@ -134,8 +134,20 @@ impl<'a> BitReader<'a> {
 
     /// Signed Exp-Golomb `se(v)`.
     pub fn read_se(&mut self) -> Result<i32> {
-        let k = self.read_ue()? as i64;
-        Ok(if k & 1 == 1 { ((k + 1) / 2) as i32 } else { -((k / 2) as i32) })
+        let mut zeros = 0u32;
+        while !self.read_bit()? {
+            zeros += 1;
+            if zeros > 32 {
+                return Err(BitError::InvalidExpGolomb);
+            }
+        }
+        let suffix = self.read_bits_u64(zeros)?;
+        let code = (1u64 << zeros) - 1 + suffix;
+        if code > (1u64 << 32) {
+            return Err(BitError::InvalidExpGolomb);
+        }
+        let value = if code & 1 == 1 { ((code + 1) / 2) as i64 } else { -((code / 2) as i64) };
+        i32::try_from(value).map_err(|_| BitError::InvalidExpGolomb)
     }
 
     /// Truncated Exp-Golomb `te(v)` with range `max`.
@@ -208,8 +220,16 @@ impl BitWriter {
         }
     }
     pub fn write_se(&mut self, v: i32) {
-        let k = if v > 0 { (v as u32) * 2 - 1 } else { (-(v as i64) as u32) * 2 };
-        self.write_ue(k);
+        if v == i32::MIN {
+            for _ in 0..32 {
+                self.write_bit(false);
+            }
+            self.write_bits(1, 1);
+            self.write_bits(1, 32);
+        } else {
+            let k = if v > 0 { (v as u32) * 2 - 1 } else { (-(v as i64) as u32) * 2 };
+            self.write_ue(k);
+        }
     }
     pub fn bit_len(&self) -> usize {
         self.buf.len() * 8 + self.nbits as usize
@@ -461,7 +481,7 @@ mod tests {
 
     #[test]
     fn exp_golomb_signed_boundaries_roundtrip() {
-        let cases = [0, 1, -1, 2, -2, i32::MAX, i32::MIN + 1];
+        let cases = [0, 1, -1, 2, -2, i32::MAX, i32::MIN + 1, i32::MIN];
         let mut writer = BitWriter::new();
         for &value in &cases {
             writer.write_se(value);
