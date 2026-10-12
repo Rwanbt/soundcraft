@@ -199,6 +199,87 @@ mod tests {
     }
 
     #[test]
+    fn scalar_block_and_chunked_processing_agree_after_reset() {
+        let kinds = [
+            FilterType::LowPass,
+            FilterType::HighPass,
+            FilterType::BandPass,
+            FilterType::Notch,
+            FilterType::Peak,
+            FilterType::LowShelf,
+            FilterType::HighShelf,
+            FilterType::AllPass,
+            FilterType::LowPass1,
+            FilterType::HighPass1,
+        ];
+        let input: Vec<f32> = (0..193).map(|i| if i == 0 { 1.0 } else { (i as f32 * 0.07).sin() * 0.25 }).collect();
+        for kind in kinds {
+            let mut scalar = Biquad::design(kind, 1200.0, 0.707, 6.0, 48_000.0);
+            let mut block = scalar;
+            let mut chunked = scalar;
+            let expected: Vec<f32> = input.iter().map(|&x| scalar.process_sample(x)).collect();
+            let mut all = input.clone();
+            block.process_block(&mut all);
+            assert_eq!(all, expected, "block differs from scalar for {kind:?}");
+            let mut chunks = input.clone();
+            for part in chunks.chunks_mut(17) {
+                chunked.process_block(part);
+            }
+            assert_eq!(chunks, expected, "chunk boundaries changed output for {kind:?}");
+
+            block.reset();
+            let mut replay = input.clone();
+            block.process_block(&mut replay);
+            assert_eq!(replay, expected, "reset did not restore initial state for {kind:?}");
+            assert!(replay.iter().all(|v| v.is_finite()), "nonfinite output for {kind:?}");
+        }
+    }
+
+    #[test]
+    fn filter_design_fails_safe_for_hostile_host_parameters() {
+        let kinds = [
+            FilterType::LowPass,
+            FilterType::HighPass,
+            FilterType::BandPass,
+            FilterType::Notch,
+            FilterType::Peak,
+            FilterType::LowShelf,
+            FilterType::HighShelf,
+            FilterType::AllPass,
+            FilterType::LowPass1,
+            FilterType::HighPass1,
+        ];
+        for kind in kinds {
+            for sr in [f32::NAN, f32::INFINITY, 0.0, 1000.0, 48_000.0, 192_000.0] {
+                for freq in [f32::NAN, f32::NEG_INFINITY, -100.0, 20.0, 1000.0, 20_000.0, f32::INFINITY] {
+                    for q in [f32::NAN, 0.0, 0.707, 100.0, f32::INFINITY] {
+                        let c = Coeffs::design(kind, freq, q, 6.0, sr);
+                        assert!(
+                            [c.b0, c.b1, c.b2, c.a1, c.a2].iter().all(|v| v.is_finite()),
+                            "invalid coefficients for {kind:?}, sr={sr}, f={freq}, q={q}"
+                        );
+                        for probe in [0.0, 1000.0, 10_000.0] {
+                            assert!(c.magnitude_db(probe, sr).is_finite());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn nonfinite_audio_resets_filter_without_poisoning_next_block() {
+        let mut filter = Biquad::design(FilterType::LowPass, 1500.0, 0.707, 0.0, 48_000.0);
+        let mut fresh = filter;
+        assert!(filter.process_sample(1.0).is_finite());
+        assert_eq!(filter.process_sample(f32::INFINITY), 0.0);
+        assert_eq!(filter.process_sample(0.25), fresh.process_sample(0.25));
+        assert_eq!(filter.process_sample(f32::NAN), 0.0);
+        fresh.reset();
+        assert_eq!(filter.process_sample(0.5), fresh.process_sample(0.5));
+    }
+
+    #[test]
     fn hostile_inputs() {
         let c = Coeffs::design(FilterType::Peak, f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 0.0);
         assert!(c.b0.is_finite());
