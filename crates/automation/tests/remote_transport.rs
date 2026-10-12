@@ -133,3 +133,41 @@ fn oversized_control_request_is_rejected_before_any_tcp_connection() {
     let error = remote.call("session.inspect", json!({"payload": "x".repeat(1024 * 1024)})).unwrap_err();
     assert_eq!(error, "control request exceeds 1 MiB limit");
 }
+
+#[test]
+fn remote_rejects_truncated_json_even_when_it_is_valid_without_a_newline() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        assert_eq!(request(&mut reader)["id"], 1);
+        stream.write_all(b"{\"id\":1,\"ok\":true,\"result\":99}").unwrap();
+        // EOF without the required JSON-lines delimiter is a transport failure, not success.
+    });
+
+    let mut remote = Remote::new(&address.to_string());
+    let error = remote.call("engine.execute", json!({"command": "track.new"})).unwrap_err();
+    assert!(error.contains("before complete control response"), "{error}");
+    server.join().unwrap();
+}
+
+#[test]
+fn remote_rejects_oversized_response_before_decoding_it_as_json() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        assert_eq!(request(&mut reader)["id"], 1);
+        // Send more than the 8-MiB client limit without a newline.
+        // A peer disconnect is expected once the client notices the limit.
+        let payload = vec![b' '; 8 * 1024 * 1024 + 8192];
+        let _ = stream.write_all(&payload);
+    });
+
+    let mut remote = Remote::new(&address.to_string());
+    let error = remote.call("session.inspect", json!({})).unwrap_err();
+    assert!(error.contains("exceeds 8 MiB"), "{error}");
+    server.join().unwrap();
+}
