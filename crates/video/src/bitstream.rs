@@ -402,6 +402,36 @@ mod tests {
     }
 
     #[test]
+    fn length_prefixed_nals_reject_every_truncated_prefix_and_payload() {
+        for width in [1usize, 2, 4] {
+            for payload in 0usize..=32 {
+                let mut encoded = vec![0u8; width];
+                for k in 0..width {
+                    encoded[width - 1 - k] = ((payload >> (8 * k)) & 0xff) as u8;
+                }
+                encoded.extend((0..payload).map(|i| i as u8));
+                assert_eq!(length_prefixed_nals(&encoded, width).unwrap(), vec![&encoded[width..]]);
+                for cut in 1..encoded.len() {
+                    assert_eq!(length_prefixed_nals(&encoded[..cut], width), Err(BitError::Eof), "width {width}, payload {payload}, cut {cut}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn bit_reader_failed_reads_do_not_consume_state() {
+        for data in [&[][..], &[0u8][..], &[0xff, 0x55][..]] {
+            let mut reader = BitReader::new(data);
+            let remaining = reader.bits_left();
+            assert_eq!(reader.read_bits(remaining as u32 + 1), Err(BitError::Eof));
+            assert_eq!(reader.position(), 0);
+            assert_eq!(reader.skip(remaining + 1), Err(BitError::Eof));
+            assert_eq!(reader.position(), 0);
+            assert_eq!(reader.read_bits(remaining as u32).unwrap(), if remaining == 0 { 0 } else if remaining == 8 { 0 } else { 0xff55 });
+        }
+    }
+
+    #[test]
     fn crc() {
         assert_eq!(crc32(b"123456789"), 0xCBF4_3926);
     }
