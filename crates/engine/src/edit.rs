@@ -221,6 +221,7 @@ pub fn trim_to(s: &mut Session, track: TrackId, range: Range) -> usize {
             n += 1;
         }
     }
+    pl.sort();
     n
 }
 
@@ -238,6 +239,7 @@ pub fn trim_start_to(s: &mut Session, track: TrackId, at: Samples) -> usize {
             n += 1;
         }
     }
+    pl.sort();
     n
 }
 
