@@ -66,3 +66,29 @@ fn final_frame_without_newline_is_processed_once_at_eof() {
     let responses = serve(b"{\"jsonrpc\":\"2.0\",\"id\":21,\"method\":\"ping\"}".to_vec());
     assert_eq!(responses, vec![json!({"jsonrpc": "2.0", "id": 21, "result": {}})]);
 }
+
+#[test]
+fn invalid_batch_members_produce_errors_without_losing_valid_ping() {
+    let input = br#"[42,null,{"jsonrpc":"2.0","id":14,"method":"ping"},{"jsonrpc":"2.0","method":"notifications/initialized"}]
+"#;
+    let responses = serve(input.to_vec());
+    assert_eq!(responses.len(), 1);
+    let batch = responses[0].as_array().unwrap();
+    assert_eq!(batch.len(), 3, "invalid members need error responses, notifications do not");
+    assert_eq!(batch[0]["error"]["code"], -32600);
+    assert_eq!(batch[1]["error"]["code"], -32600);
+    assert_eq!(batch[2], json!({"jsonrpc": "2.0", "id": 14, "result": {}}));
+}
+
+#[test]
+fn invalid_request_without_a_method_is_not_treated_as_a_notification() {
+    let input = br#"{"jsonrpc":"2.0","id":5}
+{"jsonrpc":"2.0","method":1}
+{"jsonrpc":"2.0","id":6,"method":"ping"}
+"#;
+    let responses = serve(input.to_vec());
+    assert_eq!(responses.len(), 3);
+    assert_eq!(responses[0]["error"]["code"], -32600);
+    assert_eq!(responses[1]["error"]["code"], -32600);
+    assert_eq!(responses[2], json!({"jsonrpc": "2.0", "id": 6, "result": {}}));
+}
