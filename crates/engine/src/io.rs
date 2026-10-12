@@ -499,12 +499,14 @@ fn write_session(session: &Session, path: &str, overwrite: bool) -> Result<(Sess
             }
         } else {
             let mut k = 1;
-            while dir.join(&target).exists() && !(exists_rel && target == src.path) {
+            // An unsaved source must never overwrite a pre-existing media file, even when
+            // its auto-generated path matches that file or another source's path.
+            while dir.join(&target).exists() {
+                if k > 999 {
+                    return Err(EngineError::Io(format!("no unused filename for source {}", src.name)));
+                }
                 target = format!("Audio Files/{}_{k:02}.wav", sanitize_name(&src.name));
                 k += 1;
-                if k > 999 {
-                    break;
-                }
             }
         }
         let opts = EncodeOptions { format: FileFormat::Wav, bit_depth: soundcraft_audio_io::BitDepth::Float32, dither: false, bwf: None };
