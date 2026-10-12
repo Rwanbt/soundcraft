@@ -127,7 +127,8 @@ fn append_captured(shared: &Shared, backlog: &mut Vec<f32>, input: &[f32], limit
     backlog.truncate(whole(backlog.len()));
 
     if let Ok(mut captured) = shared.data.try_lock() {
-        captured.truncate(whole(captured.len()));
+        let complete = whole(captured.len());
+        captured.truncate(complete);
         let remaining = limit.saturating_sub(captured.len());
         let from_backlog = whole(backlog.len().min(remaining));
         captured.extend_from_slice(&backlog[..from_backlog]);
