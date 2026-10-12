@@ -507,3 +507,59 @@ mod protocol_regressions {
         assert!(app.quit_requested);
     }
 }
+
+#[cfg(test)]
+mod screenshot_storage_regressions {
+    use super::*;
+
+    #[test]
+    fn serializing_screenshot_to_a_file_roundtrips_valid_rgba_png() {
+        let image = egui::ColorImage::from_rgba_unmultiplied([2, 2], &[
+            255, 0, 0, 255, 0, 255, 0, 255,
+            0, 0, 255, 255, 255, 255, 255, 255,
+        ]);
+        let dir = std::env::temp_dir().join(format!("soundcraft-shot-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("image.png");
+        let result = encode(&image, Some(path.to_str().unwrap()));
+        assert_eq!(result["ok"], true, "{result}");
+        assert_eq!(result["result"]["width"], 2);
+        assert_eq!(result["result"]["height"], 2);
+        let written = std::fs::read(&path).unwrap();
+        assert_eq!(&written[..8], &[137, 80, 78, 71, 13, 10, 26, 10]);
+        let decoded = image::load_from_memory(&written).unwrap().to_rgba8();
+        assert_eq!(decoded.as_raw(), &image.pixels.iter().flat_map(|c| c.to_array()).collect::<Vec<_>>());
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_dir(&dir).unwrap();
+    }
+
+    #[test]
+    fn invalid_rgba_dimensions_produce_structured_errors_not_panics() {
+        let image = egui::ColorImage {
+            size: [2, 2],
+            pixels: vec![egui::Color32::RED],
+        };
+        assert!(png_bytes(&image).is_err());
+        let result = encode(&image, None);
+        assert_eq!(result["ok"], false);
+        assert!(result["error"].as_str().is_some_and(|s| s.contains("bad image size")));
+    }
+
+    #[test]
+    fn base64_matches_rfc4648_for_binary_payloads_and_padding() {
+        let examples: &[(&[u8], &str)] = &[
+            (b"", ""),
+            (b"f", "Zg=="),
+            (b"fo", "Zm8="),
+            (b"foo", "Zm9v"),
+            (b"foob", "Zm9vYg=="),
+            (b"fooba", "Zm9vYmE="),
+            (b"foobar", "Zm9vYmFy"),
+            (&[0, 255, 128], "AP+A"),
+            (&[255, 255, 255], "////"),
+        ];
+        for (input, expected) in examples {
+            assert_eq!(base64(input), *expected, "{input:?}");
+        }
+    }
+}
