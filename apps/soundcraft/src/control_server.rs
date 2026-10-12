@@ -33,11 +33,58 @@ pub fn start(port: u16, ctx: egui::Context) -> Receiver<ControlRequest> {
     rx
 }
 
+/// Includes the newline: large or unterminated JSON lines must not grow memory indefinitely.
+const MAX_CONTROL_REQUEST_BYTES: usize = 1024 * 1024;
+
+/// Read one bounded JSON-lines frame. Oversized frames are fully discarded up to their newline
+/// so the next client request can still be processed on the same connection.
+fn read_limited_line(reader: &mut impl BufRead) -> std::io::Result<Option<Result<String, &'static str>>> {
+    let mut data = Vec::new();
+    let mut oversized = false;
+    loop {
+        let available = reader.fill_buf()?;
+        if available.is_empty() {
+            if data.is_empty() && !oversized {
+                return Ok(None);
+            }
+            break;
+        }
+        let consumed = available.iter().position(|&b| b == b'\n').map_or(available.len(), |n| n + 1);
+        let complete = available[consumed - 1] == b'\n';
+        if !oversized {
+            if data.len().saturating_add(consumed) > MAX_CONTROL_REQUEST_BYTES {
+                oversized = true;
+                data.clear();
+            } else {
+                data.extend_from_slice(&available[..consumed]);
+            }
+        }
+        reader.consume(consumed);
+        if complete {
+            break;
+        }
+    }
+    if oversized {
+        return Ok(Some(Err("control request exceeds 1 MiB limit")));
+    }
+    Ok(Some(String::from_utf8(data).map_err(|_| "control request is not UTF-8")))
+}
+
 fn serve(stream: TcpStream, tx: Sender<ControlRequest>, ctx: egui::Context) {
     let Ok(read) = stream.try_clone() else { return };
     let mut out = stream;
-    for line in BufReader::new(read).lines() {
-        let Ok(line) = line else { break };
+    let mut reader = BufReader::new(read);
+    loop {
+        let line = match read_limited_line(&mut reader) {
+            Ok(Some(Ok(line))) => line,
+            Ok(Some(Err(error))) => {
+                if writeln!(out, "{}", json!({"ok": false, "error": error})).is_err() {
+                    break;
+                }
+                continue;
+            }
+            Ok(None) | Err(_) => break,
+        };
         if line.trim().is_empty() {
             continue;
         }
@@ -68,6 +115,59 @@ fn serve(stream: TcpStream, tx: Sender<ControlRequest>, ctx: egui::Context) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bounded_json_lines_reject_oversized_and_invalid_utf8_without_losing_next_line() {
+        let mut input = Vec::new();
+        input.extend_from_slice(&vec![b'a'; MAX_CONTROL_REQUEST_BYTES - 1]);
+        input.push(b'\n');
+        input.extend_from_slice(&vec![b'b'; MAX_CONTROL_REQUEST_BYTES]);
+        input.extend_from_slice(b"\n");
+        input.extend_from_slice(b"\xff\n");
+        input.extend_from_slice(b"{\"id\":3}\n");
+        let mut reader = BufReader::new(input.as_slice());
+        assert_eq!(read_limited_line(&mut reader).unwrap().unwrap().unwrap().len(), MAX_CONTROL_REQUEST_BYTES);
+        assert_eq!(read_limited_line(&mut reader).unwrap().unwrap(), Err("control request exceeds 1 MiB limit"));
+        assert_eq!(read_limited_line(&mut reader).unwrap().unwrap(), Err("control request is not UTF-8"));
+        assert_eq!(read_limited_line(&mut reader).unwrap().unwrap(), Ok("{\"id\":3}\n".to_string()));
+        assert!(read_limited_line(&mut reader).unwrap().is_none());
+    }
+
+    #[test]
+    fn oversized_tcp_request_is_rejected_and_following_request_is_processed() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let address = listener.local_addr().unwrap();
+        let (sender, receiver) = channel::<ControlRequest>();
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            serve(stream, sender, egui::Context::default());
+        });
+
+        let mut client = TcpStream::connect(address).unwrap();
+        client.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let mut read = BufReader::new(client.try_clone().unwrap());
+        client.write_all(&vec![b'x'; MAX_CONTROL_REQUEST_BYTES]).unwrap();
+        client.write_all(b"\n").unwrap();
+
+        let mut line = String::new();
+        read.read_line(&mut line).unwrap();
+        let error: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(error, json!({"ok": false, "error": "control request exceeds 1 MiB limit"}));
+
+        writeln!(client, "{}", json!({"id": "after-overflow", "method": "session.inspect"})).unwrap();
+        let request = receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(request.method, "session.inspect");
+        request.reply.send(json!({"ok": true, "result": 42})).unwrap();
+
+        line.clear();
+        read.read_line(&mut line).unwrap();
+        let reply: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(reply, json!({"id": "after-overflow", "ok": true, "result": 42}));
+
+        drop(read);
+        drop(client);
+        server.join().unwrap();
+    }
 
     /// A real TCP client exercises the JSON-lines transport, error responses, request
     /// correlation and asynchronous handoff without starting a window or audio device.
