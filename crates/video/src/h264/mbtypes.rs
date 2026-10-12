@@ -203,6 +203,74 @@ mod tests {
     use super::*;
 
     #[test]
+    fn all_macroblock_partition_rectangles_tile_sixteen_blocks() {
+        for part in [Part::P16x16, Part::P16x8, Part::P8x16, Part::P8x8] {
+            let mut visited = [[false; 4]; 4];
+            for i in 0..part.num_parts() {
+                let (x, y, w, h) = part.rect(i);
+                assert!(x + w <= 4 && y + h <= 4);
+                for row in visited.iter_mut().skip(y).take(h) {
+                    for cell in row.iter_mut().skip(x).take(w) {
+                        assert!(!*cell, "overlapping {part:?} at {i}");
+                        *cell = true;
+                    }
+                }
+            }
+            assert!(visited.iter().flatten().all(|cell| *cell), "{part:?}");
+        }
+    }
+
+    #[test]
+    fn all_submacroblock_partition_rectangles_tile_four_blocks() {
+        for part in [SubPart::S8x8, SubPart::S8x4, SubPart::S4x8, SubPart::S4x4] {
+            let mut visited = [[false; 2]; 2];
+            for i in 0..part.num_parts() {
+                let (x, y, w, h) = part.rect(i);
+                assert!(x + w <= 2 && y + h <= 2);
+                for row in visited.iter_mut().skip(y).take(h) {
+                    for cell in row.iter_mut().skip(x).take(w) {
+                        assert!(!*cell, "overlapping {part:?} at {i}");
+                        *cell = true;
+                    }
+                }
+            }
+            assert!(visited.iter().flatten().all(|cell| *cell), "{part:?}");
+        }
+    }
+
+    #[test]
+    fn macroblock_type_domains_and_prediction_flags_are_exhaustive() {
+        for t in 0..=27 {
+            assert_eq!(intra_mb_type(t).is_some(), t <= 25, "intra {t}");
+            assert_eq!(p_mb_type(t).is_some(), t <= 4, "P {t}");
+            assert_eq!(b_mb_type(t).is_some(), t <= 22, "B {t}");
+            assert_eq!(p_sub_mb_type(t).is_some(), t <= 3, "P sub {t}");
+            assert_eq!(b_sub_mb_type(t).is_some(), t <= 12, "B sub {t}");
+        }
+        assert!(intra_mb_type(u32::MAX).is_none());
+        assert!(p_mb_type(u32::MAX).is_none());
+        assert!(b_mb_type(u32::MAX).is_none());
+        assert!(p_sub_mb_type(u32::MAX).is_none());
+        assert!(b_sub_mb_type(u32::MAX).is_none());
+        for t in 1..=24 {
+            let info = intra_mb_type(t).unwrap();
+            assert_eq!(info.kind, MbKind::I16x16);
+            assert_eq!(info.i16_mode, ((t - 1) % 4) as u8);
+            assert_eq!(info.i16_cbp, (if t >= 13 { 15 } else { 0 }) | (((t - 1) / 4 % 3) << 4) as u8);
+        }
+        for t in 0..=4 {
+            let info = p_mb_type(t).unwrap();
+            assert_eq!(info.pred, [PRED_L0; 2]);
+            assert_eq!(info.ref0, t == 4);
+        }
+        for t in 0..=12 {
+            let info = b_sub_mb_type(t).unwrap();
+            assert!((PRED_L0..=PRED_BI).contains(&info.pred));
+            assert_eq!(info.direct, t == 0);
+        }
+    }
+
+    #[test]
     fn cbp_table_is_permutation() {
         let mut a = [false; 48];
         let mut b = [false; 48];
