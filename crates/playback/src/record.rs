@@ -59,7 +59,7 @@ impl Recorder {
                 move |data: &[f32], _: &cpal::InputCallbackInfo| {
                     crate::mark_audio_thread();
                     mon.push(data);
-                    append_captured(&sh, &mut backlog, data, MAX_SAMPLES, 1 << 20);
+                    append_captured(&sh, &mut backlog, data, MAX_SAMPLES, 1 << 20, usize::from(config.channels));
                 },
                 |e| {
                     // Possibly the audio thread (see `crate::mark_audio_thread`).
@@ -111,21 +111,31 @@ impl Recorder {
 /// Collect input without blocking on the UI-owned take buffer. Both the persisted take
 /// and the temporary backlog have hard sample limits, including whole incoming blocks.
 /// The oldest captured samples win when the one-hour cap is reached.
-fn append_captured(shared: &Shared, backlog: &mut Vec<f32>, input: &[f32], limit: usize, backlog_limit: usize) {
+fn append_captured(shared: &Shared, backlog: &mut Vec<f32>, input: &[f32], limit: usize, backlog_limit: usize, channels: usize) {
     if !shared.armed.load(Ordering::Relaxed) {
         backlog.clear();
         return;
     }
+    // A backlog capped mid-frame would shift every channel in subsequent captured audio.
+    // Align both caps and incoming samples without blocking or allocating in the callback.
+    let channels = channels.max(1);
+    let whole = |len: usize| len - len % channels;
+    let limit = whole(limit);
+    let backlog_limit = whole(backlog_limit);
+    let input = &input[..whole(input.len())];
+    backlog.truncate(whole(backlog.len()));
+
     if let Ok(mut captured) = shared.data.try_lock() {
+        captured.truncate(whole(captured.len()));
         let remaining = limit.saturating_sub(captured.len());
-        let from_backlog = backlog.len().min(remaining);
+        let from_backlog = whole(backlog.len().min(remaining));
         captured.extend_from_slice(&backlog[..from_backlog]);
-        let from_input = input.len().min(remaining - from_backlog);
+        let from_input = whole(input.len().min(remaining - from_backlog));
         captured.extend_from_slice(&input[..from_input]);
         backlog.clear();
     } else {
         let room = backlog_limit.saturating_sub(backlog.len());
-        backlog.extend_from_slice(&input[..input.len().min(room)]);
+        backlog.extend_from_slice(&input[..whole(input.len().min(room))]);
     }
 }
 
@@ -196,9 +206,9 @@ mod tests {
         let recorder = simulated_recorder(2);
         let mut backlog = Vec::new();
         recorder.arm();
-        super::append_captured(&recorder.shared, &mut backlog, &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 4, 8);
+        super::append_captured(&recorder.shared, &mut backlog, &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 4, 8, recorder.channels);
         assert_eq!(recorder.captured_frames(), 2, "capture must not overshoot the cap");
-        super::append_captured(&recorder.shared, &mut backlog, &[7.0, 8.0], 4, 8);
+        super::append_captured(&recorder.shared, &mut backlog, &[7.0, 8.0], 4, 8, recorder.channels);
         assert_eq!(recorder.take().channels, vec![vec![1.0, 3.0], vec![2.0, 4.0]]);
     }
 
@@ -208,13 +218,13 @@ mod tests {
         let mut backlog = Vec::new();
         recorder.arm();
         let guard = recorder.shared.data.lock().unwrap();
-        super::append_captured(&recorder.shared, &mut backlog, &[1.0, 2.0], 8, 4);
-        super::append_captured(&recorder.shared, &mut backlog, &[3.0, 4.0], 8, 4);
-        super::append_captured(&recorder.shared, &mut backlog, &[9.0, 10.0], 8, 4);
+        super::append_captured(&recorder.shared, &mut backlog, &[1.0, 2.0], 8, 4, recorder.channels);
+        super::append_captured(&recorder.shared, &mut backlog, &[3.0, 4.0], 8, 4, recorder.channels);
+        super::append_captured(&recorder.shared, &mut backlog, &[9.0, 10.0], 8, 4, recorder.channels);
         assert_eq!(backlog, vec![1.0, 2.0, 3.0, 4.0], "backlog cap must not be exceeded");
         drop(guard);
 
-        super::append_captured(&recorder.shared, &mut backlog, &[5.0, 6.0], 8, 4);
+        super::append_captured(&recorder.shared, &mut backlog, &[5.0, 6.0], 8, 4, recorder.channels);
         assert!(backlog.is_empty());
         assert_eq!(recorder.take().channels, vec![vec![1.0, 3.0, 5.0], vec![2.0, 4.0, 6.0]]);
     }
@@ -225,9 +235,37 @@ mod tests {
         recorder.arm();
         let mut backlog = vec![12.0, 13.0];
         let _ = recorder.take();
-        super::append_captured(&recorder.shared, &mut backlog, &[14.0, 15.0], 8, 4);
+        super::append_captured(&recorder.shared, &mut backlog, &[14.0, 15.0], 8, 4, recorder.channels);
         assert!(backlog.is_empty());
         assert_eq!(recorder.captured_frames(), 0);
+    }
+
+    #[test]
+    fn callback_contention_never_splits_three_channel_frames_at_backlog_limit() {
+        let recorder = simulated_recorder(3);
+        recorder.arm();
+        let mut backlog = Vec::new();
+        let guard = recorder.shared.data.lock().unwrap();
+        // Five sample slots cannot hold a complete second three-channel frame.
+        super::append_captured(&recorder.shared, &mut backlog, &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 12, 5, recorder.channels);
+        assert_eq!(backlog, vec![1.0, 2.0, 3.0]);
+        drop(guard);
+
+        super::append_captured(&recorder.shared, &mut backlog, &[7.0, 8.0, 9.0], 12, 5, recorder.channels);
+        assert!(backlog.is_empty());
+        assert_eq!(recorder.take().channels, vec![vec![1.0, 7.0], vec![2.0, 8.0], vec![3.0, 9.0]]);
+    }
+
+    #[test]
+    fn callback_hard_cap_and_partial_input_preserve_complete_stereo_frames() {
+        let recorder = simulated_recorder(2);
+        recorder.arm();
+        let mut backlog = Vec::new();
+        // The configured five-sample cap must truncate to four samples (two frames).
+        super::append_captured(&recorder.shared, &mut backlog, &[1.0, 2.0, 3.0, 4.0, 5.0], 5, 5, recorder.channels);
+        assert_eq!(recorder.shared.data.lock().unwrap().len(), 4);
+        super::append_captured(&recorder.shared, &mut backlog, &[6.0, 7.0], 5, 5, recorder.channels);
+        assert_eq!(recorder.take().channels, vec![vec![1.0, 3.0], vec![2.0, 4.0]]);
     }
 
     #[test]
