@@ -138,3 +138,45 @@ fn failed_save_does_not_change_the_open_session_or_its_dirty_state() {
     assert!(engine.is_dirty());
     assert!(engine.path.is_none());
 }
+
+#[test]
+fn autosave_copy_keeps_unsaved_live_audio_and_restores_its_samples() {
+    let dir = Scratch::new();
+    let path = dir.path("recovery.scraft");
+    let mut engine = Engine::default();
+    let source_id = add_audio(&mut engine, "Live", -0.375);
+    let revision = engine.revision;
+    assert!(engine.session().sources[0].unsaved);
+
+    assert_eq!(io::save_copy(&engine, text(&path)).unwrap(), 1);
+    assert_eq!(io::save_copy(&engine, text(&path)).unwrap(), 0);
+    assert!(engine.session().sources[0].unsaved, "saving recovery media must not clear live source flags");
+    assert!(engine.path.is_none());
+    assert_eq!(engine.revision, revision);
+
+    let mut restored = Engine::default();
+    assert!(io::open_session(&mut restored, text(&path)).unwrap().is_empty());
+    assert_eq!(restored.session().pool.get(source_id).unwrap().buffer.channels[0], vec![-0.375; 64]);
+}
+
+#[test]
+fn failed_open_of_corrupted_session_keeps_pending_edits_and_active_file() {
+    let dir = Scratch::new();
+    let original = dir.path("original.scraft");
+    let corrupted = dir.path("corrupted.scraft");
+    let mut engine = Engine::default();
+    engine.execute("track.new", &json!({"name": "Saved"})).unwrap();
+    io::save_session(&mut engine, text(&original)).unwrap();
+    engine.execute("track.new", &json!({"name": "Pending"})).unwrap();
+    let active_path = engine.path.clone();
+    let revision = engine.revision;
+    let before = engine.session().to_json().unwrap();
+
+    std::fs::write(&corrupted, b"{\"invalid\":").unwrap();
+    assert!(io::open_session(&mut engine, text(&corrupted)).is_err());
+    assert_eq!(engine.path, active_path);
+    assert_eq!(engine.revision, revision);
+    assert_eq!(engine.session().to_json().unwrap(), before);
+    assert!(engine.is_dirty());
+    assert!(engine.session().track_by_name("Pending").is_some());
+}
