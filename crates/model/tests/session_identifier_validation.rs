@@ -76,3 +76,24 @@ fn stale_allocator_is_repaired_and_normal_sessions_still_round_trip() {
     assert!(fresh.0 > loaded.markers[0].id.0);
     assert_ne!(fresh.0, track.0);
 }
+
+#[test]
+fn invalid_serialized_sample_rates_are_rejected_before_engine_use() {
+    let session = Session::default();
+    let mut doc = serde_json::to_value(&session).unwrap();
+    for rate in [0u32, 1, 7_999, 768_001, u32::MAX] {
+        doc["sample_rate"] = serde_json::json!(rate);
+        let result = Session::from_json(&doc.to_string());
+        assert!(matches!(result, Err(SessionError::Invalid(ref message)) if message.contains("sample rate")), "rate {rate}: {result:?}");
+    }
+}
+
+#[test]
+fn supported_sample_rate_boundaries_survive_json_load() {
+    let mut doc = serde_json::to_value(Session::default()).unwrap();
+    for rate in [8_000u32, 44_100, 48_000, 768_000] {
+        doc["sample_rate"] = serde_json::json!(rate);
+        let restored = Session::from_json(&doc.to_string()).unwrap();
+        assert_eq!(restored.sample_rate.hz(), rate);
+    }
+}
