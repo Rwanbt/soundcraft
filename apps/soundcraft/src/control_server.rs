@@ -49,8 +49,8 @@ fn read_limited_line(reader: &mut impl BufRead) -> std::io::Result<Option<Result
             }
             break;
         }
-        let consumed = available.iter().position(|&b| b == b'\\n').map_or(available.len(), |n| n + 1);
-        let complete = available[consumed - 1] == b'\\n';
+        let consumed = available.iter().position(|&b| b == b'\n').map_or(available.len(), |n| n + 1);
+        let complete = available[consumed - 1] == b'\n';
         if !oversized {
             if data.len().saturating_add(consumed) > MAX_CONTROL_REQUEST_BYTES {
                 oversized = true;
@@ -120,11 +120,11 @@ mod tests {
     fn bounded_json_lines_reject_oversized_and_invalid_utf8_without_losing_next_line() {
         let mut input = Vec::new();
         input.extend_from_slice(&vec![b'a'; MAX_CONTROL_REQUEST_BYTES - 1]);
-        input.push(b'\\n');
+        input.push(b'\n');
         input.extend_from_slice(&vec![b'b'; MAX_CONTROL_REQUEST_BYTES]);
-        input.extend_from_slice(b"\\n");
-        input.extend_from_slice(b"\\xff\\n");
-        input.extend_from_slice(b"{\\\"id\\\":3}\\n");
+        input.extend_from_slice(b"\n");
+        input.extend_from_slice(b"\xff\n");
+        input.extend_from_slice(b"{\\"id\\":3}\n");
         let mut reader = BufReader::new(input.as_slice());
         assert_eq!(read_limited_line(&mut reader).unwrap().unwrap().unwrap().len(), MAX_CONTROL_REQUEST_BYTES);
         assert_eq!(
@@ -132,7 +132,7 @@ mod tests {
             Err("control request exceeds 1 MiB limit")
         );
         assert_eq!(read_limited_line(&mut reader).unwrap().unwrap(), Err("control request is not UTF-8"));
-        assert_eq!(read_limited_line(&mut reader).unwrap().unwrap(), Ok("{\\\"id\\\":3}\\n".to_string()));
+        assert_eq!(read_limited_line(&mut reader).unwrap().unwrap(), Ok("{\\"id\\":3}\n".to_string()));
         assert!(read_limited_line(&mut reader).unwrap().is_none());
     }
 
@@ -150,7 +150,7 @@ mod tests {
         client.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
         let mut read = BufReader::new(client.try_clone().unwrap());
         client.write_all(&vec![b'x'; MAX_CONTROL_REQUEST_BYTES]).unwrap();
-        client.write_all(b"\\n").unwrap();
+        client.write_all(b"\n").unwrap();
 
         let mut line = String::new();
         read.read_line(&mut line).unwrap();
