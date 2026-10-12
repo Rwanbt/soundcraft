@@ -36,3 +36,43 @@ macro_rules! ensure {
     };
 }
 pub(crate) use ensure;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decoder_error_variants_have_stable_classification_and_messages() {
+        let cases = [
+            (Error::Invalid("bad slice".into()), "invalid bitstream: bad slice"),
+            (Error::Unsupported("profile".into()), "unsupported: profile"),
+            (Error::MissingParameterSet("sps 7".into()), "missing parameter set: sps 7"),
+            (Error::Bitstream(BitError::Eof), "bitstream error: unexpected end of bitstream"),
+            (Error::Bitstream(BitError::InvalidExpGolomb), "bitstream error: invalid Exp-Golomb code"),
+        ];
+        for (error, expected) in cases {
+            assert_eq!(error.to_string(), expected);
+            assert_eq!(error.clone(), error);
+        }
+    }
+
+    #[test]
+    fn error_helpers_and_ensure_macro_preserve_invalid_vs_unsupported() {
+        assert_eq!(invalid::<()>("out of range"), Err(Error::Invalid("out of range".into())));
+        assert_eq!(unsupported::<()>("feature"), Err(Error::Unsupported("feature".into())));
+        fn validate(value: i32) -> Result<i32> {
+            ensure!(value >= 0, "negative value: {value}");
+            Ok(value)
+        }
+        assert_eq!(validate(0), Ok(0));
+        assert_eq!(validate(-3), Err(Error::Invalid("negative value: -3".into())));
+    }
+
+    #[test]
+    fn bitstream_error_conversion_is_lossless() {
+        for source in [BitError::Eof, BitError::InvalidExpGolomb] {
+            let decoded: Error = source.into();
+            assert_eq!(decoded, Error::Bitstream(source));
+        }
+    }
+}
