@@ -113,6 +113,27 @@ fn info(args: &[String]) -> ExitCode {
 
 fn convert(args: &[String]) -> ExitCode {
     let (Some(input), Some(output)) = (args.first(), args.get(1)) else { return fail("convert IN OUT") };
+    // Validate flags before decoding an entire source file or creating the output. Silent
+    // fallbacks on malformed options can produce a valid file with the wrong audio contract.
+    let rate = if args.iter().any(|a| a == "--rate") {
+        match arg_value(args, "--rate").as_deref().and_then(|value| value.parse::<u32>().ok()) {
+            Some(hz) if (1..=768_000).contains(&hz) => Some(hz),
+            _ => return fail("--rate requires an integer sample rate from 1 to 768000 Hz"),
+        }
+    } else {
+        None
+    };
+    let bit_depth = match arg_value(args, "--bit-depth").as_deref() {
+        Some("16") => soundcraft_audio_io::BitDepth::Int16,
+        Some("24") => soundcraft_audio_io::BitDepth::Int24,
+        Some("32") | Some("32f") => soundcraft_audio_io::BitDepth::Float32,
+        None if !args.iter().any(|a| a == "--bit-depth") => soundcraft_audio_io::BitDepth::Int24,
+        _ => return fail("--bit-depth must be 16, 24, 32 or 32f"),
+    };
+    let out_ext = std::path::Path::new(output).extension().and_then(|x| x.to_str()).unwrap_or("wav").to_ascii_lowercase();
+    let Some(format) = soundcraft_audio_io::encode_format_for(&out_ext) else {
+        return fail(format!("{output}: cannot write `.{out_ext}` files (supported: {})", soundcraft_audio_io::ENCODE_EXTENSIONS));
+    };
     let bytes = match std::fs::read(input) {
         Ok(b) => b,
         Err(e) => return fail(format!("{input}: {e}")),
@@ -122,22 +143,13 @@ fn convert(args: &[String]) -> ExitCode {
         Ok(x) => x,
         Err(e) => return fail(format!("{input}: {e}")),
     };
-    if let Some(rate) = arg_value(args, "--rate").and_then(|r| r.parse::<u32>().ok()) {
+    if let Some(rate) = rate {
         buf.channels = soundcraft_dsp::offline::resample(&buf.channels, buf.sample_rate, rate);
         buf.sample_rate = rate;
     }
     if args.iter().any(|a| a == "--normalize") {
         soundcraft_dsp::offline::normalize(&mut buf.channels, -0.1, false);
     }
-    let out_ext = std::path::Path::new(output).extension().and_then(|x| x.to_str()).unwrap_or("wav").to_ascii_lowercase();
-    let Some(format) = soundcraft_audio_io::encode_format_for(&out_ext) else {
-        return fail(format!("{output}: cannot write `.{out_ext}` files (supported: {})", soundcraft_audio_io::ENCODE_EXTENSIONS));
-    };
-    let bit_depth = match arg_value(args, "--bit-depth").as_deref() {
-        Some("16") => soundcraft_audio_io::BitDepth::Int16,
-        Some("32") | Some("32f") => soundcraft_audio_io::BitDepth::Float32,
-        _ => soundcraft_audio_io::BitDepth::Int24,
-    };
     let opts = soundcraft_audio_io::EncodeOptions { format, bit_depth, dither: true, bwf: None };
     match soundcraft_audio_io::encode(&buf, &opts).map_err(|e| e.to_string()).and_then(|b| std::fs::write(output, b).map_err(|e| e.to_string())) {
         Ok(()) => {
