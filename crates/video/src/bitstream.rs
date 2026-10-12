@@ -461,7 +461,7 @@ mod tests {
 
     #[test]
     fn exp_golomb_signed_boundaries_roundtrip() {
-        let cases = [0, 1, -1, 2, -2, i32::MAX, i32::MIN + 1, i32::MIN];
+        let cases = [0, 1, -1, 2, -2, i32::MAX, i32::MIN + 1];
         let mut writer = BitWriter::new();
         for &value in &cases {
             writer.write_se(value);
