@@ -94,11 +94,7 @@ fn cli_script_failure_reports_the_line_and_skips_final_save() {
 fn fixture_wav(dir: &Scratch) -> PathBuf {
     let path = dir.path("stereo-input.wav");
     let input = AudioBuffer { sample_rate: 48_000, channels: vec![vec![0.25; 4800], vec![-0.125; 4800]] };
-    let bytes = encode(
-        &input,
-        &EncodeOptions { format: FileFormat::Wav, bit_depth: BitDepth::Int16, dither: false, bwf: None },
-    )
-    .unwrap();
+    let bytes = encode(&input, &EncodeOptions { format: FileFormat::Wav, bit_depth: BitDepth::Int16, dither: false, bwf: None }).unwrap();
     std::fs::write(&path, bytes).unwrap();
     path
 }
