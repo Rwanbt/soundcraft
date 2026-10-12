@@ -234,6 +234,45 @@ mod tests {
     }
 
     #[test]
+    fn every_timecode_rate_roundtrips_signed_frame_labels() {
+        let frames = [-1_000_000, -107_892, -17_982, -1_800, -1, 0, 1, 1_799, 1_800, 17_982, 35_964, 107_892, 1_000_000];
+        for rate in FrameRate::ALL {
+            for frame in frames {
+                let tc = Timecode::from_frames(frame, rate);
+                assert_eq!(tc.to_frames(rate), frame, "{rate:?} at frame {frame}");
+                assert_eq!(Timecode::parse(&tc.format(rate)).unwrap(), tc, "{rate:?} at frame {frame}");
+            }
+        }
+    }
+
+    #[test]
+    fn frame_to_sample_quantization_stays_within_one_frame() {
+        let sr = SampleRate::HZ_48000;
+        for rate in FrameRate::ALL {
+            assert!(rate.samples_per_frame(sr) > 0.0);
+            for frame in -1000..=1000 {
+                let sample = rate.samples_at_frame(frame, sr);
+                let next = rate.samples_at_frame(frame + 1, sr);
+                assert!(next > sample, "nonmonotonic {rate:?} at {frame}");
+                let recovered = rate.frames_at(sample, sr);
+                assert!((recovered as i128 - frame as i128).abs() <= 1, "quantization drift for {rate:?} at {frame}: got {recovered}");
+            }
+        }
+    }
+
+    #[test]
+    fn negative_feet_frames_keep_nonnegative_frame_remainders() {
+        let sr = SampleRate::HZ_48000;
+        let rate = FrameRate::Fps24;
+        for frame in -100..=100 {
+            let sample = rate.samples_at_frame(frame, sr);
+            let (feet, remainder) = feet_frames(sample, rate, sr);
+            assert!((0..16).contains(&remainder));
+            assert_eq!(feet * 16 + remainder, frame);
+        }
+    }
+
+    #[test]
     fn parse_variants() {
         let tc = Timecode::parse("01:02:03:04").unwrap();
         assert_eq!((tc.hours, tc.minutes, tc.seconds, tc.frames), (1, 2, 3, 4));
