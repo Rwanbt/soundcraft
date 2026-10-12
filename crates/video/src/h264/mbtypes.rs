@@ -271,6 +271,63 @@ mod tests {
     }
 
     #[test]
+    fn b_slice_partition_prediction_matrix_matches_every_table_entry() {
+        let pairs = [
+            (PRED_L0, PRED_L0),
+            (PRED_L1, PRED_L1),
+            (PRED_L0, PRED_L1),
+            (PRED_L1, PRED_L0),
+            (PRED_L0, PRED_BI),
+            (PRED_L1, PRED_BI),
+            (PRED_BI, PRED_L0),
+            (PRED_BI, PRED_L1),
+            (PRED_BI, PRED_BI),
+        ];
+        let direct = b_mb_type(0).unwrap();
+        assert_eq!(direct.kind, MbKind::BDirect16x16);
+        assert_eq!(direct.pred, [PRED_BI; 2]);
+        for t in 1..=3 {
+            let info = b_mb_type(t).unwrap();
+            assert_eq!(info.kind, MbKind::Inter);
+            assert_eq!(info.part, Part::P16x16);
+            assert_eq!(info.pred, [t as u8; 2]);
+        }
+        for t in 4..=21 {
+            let info = b_mb_type(t).unwrap();
+            let (a, b) = pairs[((t - 4) / 2) as usize];
+            assert_eq!(info.kind, MbKind::Inter);
+            assert_eq!(info.pred, [a, b], "B type {t}");
+            assert_eq!(info.part, if t % 2 == 0 { Part::P16x8 } else { Part::P8x16 }, "B type {t}");
+        }
+        assert_eq!(b_mb_type(22).unwrap().part, Part::P8x8);
+    }
+
+    #[test]
+    fn b_submacroblock_prediction_matrix_matches_every_table_entry() {
+        let expected = [
+            (SubPart::S8x8, PRED_BI, true),
+            (SubPart::S8x8, PRED_L0, false),
+            (SubPart::S8x8, PRED_L1, false),
+            (SubPart::S8x8, PRED_BI, false),
+            (SubPart::S8x4, PRED_L0, false),
+            (SubPart::S4x8, PRED_L0, false),
+            (SubPart::S8x4, PRED_L1, false),
+            (SubPart::S4x8, PRED_L1, false),
+            (SubPart::S8x4, PRED_BI, false),
+            (SubPart::S4x8, PRED_BI, false),
+            (SubPart::S4x4, PRED_L0, false),
+            (SubPart::S4x4, PRED_L1, false),
+            (SubPart::S4x4, PRED_BI, false),
+        ];
+        for (t, &(shape, pred, direct)) in expected.iter().enumerate() {
+            assert_eq!(b_sub_mb_type(t as u32), Some(SubMbInfo { shape, pred, direct }));
+        }
+        for (t, shape) in [SubPart::S8x8, SubPart::S8x4, SubPart::S4x8, SubPart::S4x4].iter().enumerate() {
+            assert_eq!(p_sub_mb_type(t as u32), Some(SubMbInfo { shape: *shape, pred: PRED_L0, direct: false }));
+        }
+    }
+
+    #[test]
     fn cbp_table_is_permutation() {
         let mut a = [false; 48];
         let mut b = [false; 48];
