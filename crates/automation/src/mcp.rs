@@ -215,6 +215,14 @@ impl<B: Backend> Server<B> {
 
     /// Handle one JSON-RPC message; returns the reply line (None for notifications).
     pub fn handle(&mut self, msg: &Value) -> Option<Value> {
+        // Invalid batch members and malformed request objects require an error response.
+        // Notifications are silent only when their method is syntactically valid.
+        if !msg.is_object() {
+            return Some(invalid_request("JSON-RPC request must be an object"));
+        }
+        if msg.get("method").and_then(Value::as_str).is_none_or(str::is_empty) {
+            return Some(invalid_request("JSON-RPC method must be a nonempty string"));
+        }
         let id = msg.get("id").cloned();
         let method = msg.get("method").and_then(Value::as_str).unwrap_or("");
         let params = msg.get("params").cloned().unwrap_or(json!({}));
