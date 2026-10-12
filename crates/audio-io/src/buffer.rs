@@ -78,8 +78,7 @@ mod tests {
     fn complete_interleaved_roundtrip_for_small_channel_counts_and_frame_sizes() {
         for channels in 0..=8usize {
             for frames in 0..=129usize {
-                let original: Vec<Vec<f32>> =
-                    (0..channels).map(|ch| (0..frames).map(|frame| (ch * 1000 + frame) as f32 / 10.0).collect()).collect();
+                let original: Vec<Vec<f32>> = (0..channels).map(|ch| (0..frames).map(|frame| (ch * 1000 + frame) as f32 / 10.0).collect()).collect();
                 let a = AudioBuffer { sample_rate: 96_000, channels: original };
                 let interleaved = a.interleaved();
                 let b = AudioBuffer::from_interleaved(96_000, channels, &interleaved);
@@ -112,10 +111,7 @@ mod tests {
 
     #[test]
     fn ragged_audio_is_bounded_by_shortest_channel() {
-        let b = AudioBuffer {
-            sample_rate: 44_100,
-            channels: vec![vec![1.0, 2.0, 99.0], vec![3.0, 4.0], vec![5.0, 6.0, 7.0, 8.0]],
-        };
+        let b = AudioBuffer { sample_rate: 44_100, channels: vec![vec![1.0, 2.0, 99.0], vec![3.0, 4.0], vec![5.0, 6.0, 7.0, 8.0]] };
         assert_eq!(b.frames(), 2);
         assert_eq!(b.interleaved(), vec![1.0, 3.0, 5.0, 2.0, 4.0, 6.0]);
         let mut c = b.clone();
