@@ -124,7 +124,7 @@ mod tests {
         input.extend_from_slice(&vec![b'b'; MAX_CONTROL_REQUEST_BYTES]);
         input.extend_from_slice(b"\n");
         input.extend_from_slice(b"\xff\n");
-        input.extend_from_slice(b"{\\"id\\":3}\n");
+        input.extend_from_slice(b"{\"id\":3}\n");
         let mut reader = BufReader::new(input.as_slice());
         assert_eq!(read_limited_line(&mut reader).unwrap().unwrap().unwrap().len(), MAX_CONTROL_REQUEST_BYTES);
         assert_eq!(
@@ -132,7 +132,7 @@ mod tests {
             Err("control request exceeds 1 MiB limit")
         );
         assert_eq!(read_limited_line(&mut reader).unwrap().unwrap(), Err("control request is not UTF-8"));
-        assert_eq!(read_limited_line(&mut reader).unwrap().unwrap(), Ok("{\\"id\\":3}\n".to_string()));
+        assert_eq!(read_limited_line(&mut reader).unwrap().unwrap(), Ok("{\"id\":3}\n".to_string()));
         assert!(read_limited_line(&mut reader).unwrap().is_none());
     }
 
