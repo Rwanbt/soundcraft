@@ -255,10 +255,7 @@ mod tests {
                 let next = rate.samples_at_frame(frame + 1, sr);
                 assert!(next > sample, "nonmonotonic {rate:?} at {frame}");
                 let recovered = rate.frames_at(sample, sr);
-                assert!(
-                    (recovered as i128 - frame as i128).abs() <= 1,
-                    "quantization drift for {rate:?} at {frame}: got {recovered}"
-                );
+                assert!((recovered as i128 - frame as i128).abs() <= 1, "quantization drift for {rate:?} at {frame}: got {recovered}");
             }
         }
     }
