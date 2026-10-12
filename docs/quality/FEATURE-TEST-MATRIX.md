@@ -40,6 +40,29 @@ every external contract, platform interaction or edge case.
 | `xtask` | 156 / 343 | 45.48% | PARTIAL | Packaging, code generation, asset checks and CLI handlers |
 | **Total** | **35,815 / 47,018** | **76.17%** | **PARTIAL** | **LCOV from this exact run** |
 
+## Verified incremental fork CI (2026-10-13)
+
+These **independent draft PR checks** are not pooled into one coverage percentage or
+assumed to exist on `main`. The Rust quality jobs include Linux formatting,
+Clippy and workspace tests plus Windows/macOS matrix validation. Every success
+listed here corresponds to the PR's actual HEAD SHA.
+
+| Fork PR | Exact head (short) | Rust quality | LLVM coverage | Additional evidence | Scope |
+| --- | --- | --- | --- | --- | --- |
+| [#60](https://github.com/Rwanbt/soundcraft/pull/60) | `04efd175` | [success](https://github.com/Rwanbt/soundcraft/actions/runs/38268289274) | [success](https://github.com/Rwanbt/soundcraft/actions/runs/38268289269) | WASM compile | TCP request cap, malformed input and recovery |
+| [#61](https://github.com/Rwanbt/soundcraft/pull/61) | `032c6aff` | [success](https://github.com/Rwanbt/soundcraft/actions/runs/38274289850) | [success](https://github.com/Rwanbt/soundcraft/actions/runs/38274290571) | Windows/macOS | Audio conversion and real-process CLI |
+| [#62](https://github.com/Rwanbt/soundcraft/pull/62) | `0e55ba68` | [success](https://github.com/Rwanbt/soundcraft/actions/runs/38274218145) | [success](https://github.com/Rwanbt/soundcraft/actions/runs/38274218320) | [Chromium success](https://github.com/Rwanbt/soundcraft/actions/runs/38274218272) | Nonfinite DSP DC correction |
+| [#64](https://github.com/Rwanbt/soundcraft/pull/64) | `12e41b97` | [success](https://github.com/Rwanbt/soundcraft/actions/runs/38278108745) | [success](https://github.com/Rwanbt/soundcraft/actions/runs/38278108912) | [Chromium success](https://github.com/Rwanbt/soundcraft/actions/runs/38278108762) | Session save and recovery collision tests |
+| [#65](https://github.com/Rwanbt/soundcraft/pull/65) | `2e408332` | [success](https://github.com/Rwanbt/soundcraft/actions/runs/38278237685) | [success](https://github.com/Rwanbt/soundcraft/actions/runs/38278237746) | [Chromium success](https://github.com/Rwanbt/soundcraft/actions/runs/38278237672), [FreeBSD success](https://github.com/Rwanbt/soundcraft/actions/runs/38278237673) | Recording-frame integrity |
+| [#66](https://github.com/Rwanbt/soundcraft/pull/66) | `96b7bff9` | [success](https://github.com/Rwanbt/soundcraft/actions/runs/38313570703) | [success](https://github.com/Rwanbt/soundcraft/actions/runs/38313570794) | [Chromium success](https://github.com/Rwanbt/soundcraft/actions/runs/38313570700) | Correlated TCP replies and at-most-once client dispatch |
+| [#67](https://github.com/Rwanbt/soundcraft/pull/67) | `741740fc` | [success](https://github.com/Rwanbt/soundcraft/actions/runs/38313734760) | [success](https://github.com/Rwanbt/soundcraft/actions/runs/38313734754) | [Chromium success](https://github.com/Rwanbt/soundcraft/actions/runs/38313734751) | Bounded MCP JSON-RPC input and batch errors |
+
+PR #63 is a documentation-only evidence update, without triggered Rust test workflows.
+All listed PRs remain **DRAFT**, are based on the unmodified fork `main`
+(except explicitly stacked later PRs), and have not been merged. Platform checks
+do not establish physical audio device functionality. The baseline coverage
+above remains the measured number for PR #60, not an aggregate of these PRs.
+
 ## Traceability policy
 
 A feature row is `VERIFIED` only with a documented expected contract, regression oracle, actual
