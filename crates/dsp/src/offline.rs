@@ -99,8 +99,12 @@ pub fn remove_dc(ch: &mut [Vec<f32>]) {
         if c.is_empty() {
             continue;
         }
-        let mean = c.iter().filter(|v| v.is_finite()).map(|&v| f64::from(v)).sum::<f64>() / c.len() as f64;
-        let m = mean as f32;
+        // Corrupt/non-finite samples must not bias the offset of valid audio.
+        let (sum, count) = c.iter().filter(|v| v.is_finite()).fold((0.0f64, 0usize), |(sum, count), &v| (sum + f64::from(v), count + 1));
+        if count == 0 {
+            continue;
+        }
+        let m = (sum / count as f64) as f32;
         c.iter_mut().for_each(|s| *s -= m);
     }
 }
