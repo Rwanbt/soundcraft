@@ -146,7 +146,7 @@ impl<'a> BitReader<'a> {
         if code > (1u64 << 32) {
             return Err(BitError::InvalidExpGolomb);
         }
-        let value = if code & 1 == 1 { ((code + 1) / 2) as i64 } else { -((code / 2) as i64) };
+        let value = if code & 1 == 1 { code.div_ceil(2) as i64 } else { -((code / 2) as i64) };
         i32::try_from(value).map_err(|_| BitError::InvalidExpGolomb)
     }
 
