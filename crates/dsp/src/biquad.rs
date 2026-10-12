@@ -212,9 +212,7 @@ mod tests {
             FilterType::LowPass1,
             FilterType::HighPass1,
         ];
-        let input: Vec<f32> = (0..193)
-            .map(|i| if i == 0 { 1.0 } else { (i as f32 * 0.07).sin() * 0.25 })
-            .collect();
+        let input: Vec<f32> = (0..193).map(|i| if i == 0 { 1.0 } else { (i as f32 * 0.07).sin() * 0.25 }).collect();
         for kind in kinds {
             let mut scalar = Biquad::design(kind, 1200.0, 0.707, 6.0, 48_000.0);
             let mut block = scalar;
