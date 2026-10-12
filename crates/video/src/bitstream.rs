@@ -429,13 +429,7 @@ mod tests {
             assert_eq!(reader.position(), 0);
             assert_eq!(
                 reader.read_bits(remaining as u32).unwrap(),
-                if remaining == 0 {
-                    0
-                } else if remaining == 8 {
-                    0
-                } else {
-                    0xff55
-                }
+                if remaining <= 8 { 0 } else { 0xff55 }
             );
         }
     }
