@@ -418,3 +418,39 @@ impl Default for Dpb {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_dpb_flush_is_idempotent_and_produces_no_output() {
+        let mut dpb = Dpb::new();
+        let mut output = Vec::new();
+        assert!(dpb.entries.is_empty());
+        assert_eq!(dpb.capacity, 16);
+        assert_eq!(dpb.max_reorder, 16);
+        assert_eq!(dpb.num_refs(), 0);
+        assert!(!dpb.bump(&mut output));
+        for _ in 0..3 {
+            dpb.flush(&mut output);
+            assert!(output.is_empty());
+            assert!(dpb.entries.is_empty());
+        }
+    }
+
+    #[test]
+    fn idr_resets_long_term_reference_policy_for_both_output_modes() {
+        for no_output in [false, true] {
+            let mut dpb = Dpb::new();
+            dpb.max_long_term_frame_idx = Some(15);
+            let mut output = Vec::new();
+            dpb.idr(no_output, &mut output);
+            assert!(dpb.max_long_term_frame_idx.is_none());
+            assert!(dpb.entries.is_empty());
+            assert!(output.is_empty());
+            dpb.idr(no_output, &mut output);
+            assert!(output.is_empty());
+        }
+    }
+}
