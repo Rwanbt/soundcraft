@@ -2,10 +2,47 @@
 
 use crate::Backend;
 use serde_json::{Value, json};
-use std::io::{BufRead, Write};
+use std::io::{self, BufRead, Write};
 
 pub const PROTOCOL_VERSION: &str = "2025-06-18";
 const SUPPORTED: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
+
+const MAX_MCP_REQUEST_BYTES: usize = 1024 * 1024;
+
+/// Read a full frame without accumulating an unbounded JSON line. On overflow consume
+/// through its newline so a subsequent valid RPC request remains in sync.
+fn read_bounded_line(input: &mut impl BufRead) -> io::Result<Option<Result<Vec<u8>, ()>>> {
+    let mut line = Vec::new();
+    let mut oversized = false;
+    loop {
+        let available = input.fill_buf()?;
+        if available.is_empty() {
+            if line.is_empty() && !oversized {
+                return Ok(None);
+            }
+            break;
+        }
+        let n = available.iter().position(|&b| b == b'\n').map_or(available.len(), |i| i + 1);
+        let complete = available[n - 1] == b'\n';
+        if !oversized {
+            if line.len().saturating_add(n) > MAX_MCP_REQUEST_BYTES {
+                line.clear();
+                oversized = true;
+            } else {
+                line.extend_from_slice(&available[..n]);
+            }
+        }
+        input.consume(n);
+        if complete {
+            break;
+        }
+    }
+    Ok(Some(if oversized { Err(()) } else { Ok(line) }))
+}
+
+fn invalid_request(message: &str) -> Value {
+    json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32600, "message": message}})
+}
 
 const INSTRUCTIONS: &str = "SoundCraft is a digital audio workstation (Pro Tools-class). Everything a user can do is a \
 command: call `list_commands` to discover ids and their params, then `execute` (or `batch`). Positions are samples \
@@ -226,20 +263,25 @@ impl<B: Backend> Server<B> {
         })
     }
 
-    /// Serve until EOF.
-    pub fn serve(&mut self, input: impl BufRead, mut out: impl Write) -> std::io::Result<()> {
-        for line in input.lines() {
-            let line = line?;
-            if line.trim().is_empty() {
-                continue;
-            }
-            let reply = match serde_json::from_str::<Value>(&line) {
-                Ok(Value::Array(batch)) => {
-                    let replies: Vec<Value> = batch.iter().filter_map(|m| self.handle(m)).collect();
-                    if replies.is_empty() { None } else { Some(Value::Array(replies)) }
+    /// Serve until EOF, rejecting oversized frames while keeping the stream synchronized.
+    pub fn serve(&mut self, mut input: impl BufRead, mut out: impl Write) -> io::Result<()> {
+        while let Some(frame) = read_bounded_line(&mut input)? {
+            let reply = match frame {
+                Err(()) => Some(invalid_request("request exceeds 1 MiB limit")),
+                Ok(line) => {
+                    if line.iter().all(u8::is_ascii_whitespace) {
+                        continue;
+                    }
+                    match serde_json::from_slice::<Value>(&line) {
+                        Ok(Value::Array(batch)) if batch.is_empty() => Some(invalid_request("empty JSON-RPC batch")),
+                        Ok(Value::Array(batch)) => {
+                            let replies: Vec<Value> = batch.iter().filter_map(|m| self.handle(m)).collect();
+                            if replies.is_empty() { None } else { Some(Value::Array(replies)) }
+                        }
+                        Ok(msg) => self.handle(&msg),
+                        Err(e) => Some(json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32700, "message": format!("parse error: {e}")}})),
+                    }
                 }
-                Ok(msg) => self.handle(&msg),
-                Err(e) => Some(json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32700, "message": format!("parse error: {e}")}})),
             };
             if let Some(r) = reply {
                 writeln!(out, "{r}")?;
