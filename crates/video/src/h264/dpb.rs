@@ -423,6 +423,54 @@ impl Default for Dpb {
 mod tests {
     use super::*;
 
+    fn entry(id: u32, poc: i32, mark: RefMark, needed_for_output: bool) -> DpbEntry {
+        let frame = Arc::new(crate::h264::picture::Frame::new(id, poc, 1, 1));
+        let meta = Arc::new(OutputMeta {
+            pts: poc as i64,
+            key: false,
+            crop: (0, 0, 16, 16),
+            full_range: false,
+            colour_primaries: 2,
+            transfer_characteristics: 2,
+            matrix_coefficients: 2,
+            sar: (1, 1),
+            draft: false,
+        });
+        DpbEntry { frame, poc, frame_num: id, long_term_frame_idx: 0, mark, needed_for_output, non_existing: false, meta }
+    }
+
+    #[test]
+    fn flush_outputs_pictures_by_poc_and_keeps_reference_frames() {
+        let mut dpb = Dpb::new();
+        dpb.entries.push(entry(1, 30, RefMark::Unused, true));
+        dpb.entries.push(entry(2, 10, RefMark::Short, true));
+        dpb.entries.push(entry(3, 20, RefMark::Unused, true));
+        dpb.entries.push(entry(4, 40, RefMark::Long, false));
+        let mut output = Vec::new();
+        dpb.flush(&mut output);
+        assert_eq!(output.iter().map(|frame| frame.poc).collect::<Vec<_>>(), vec![10, 20, 30]);
+        assert_eq!(output.iter().map(|frame| frame.meta.pts).collect::<Vec<_>>(), vec![10, 20, 30]);
+        assert_eq!(dpb.entries.len(), 2);
+        assert!(dpb.entries.iter().all(|entry| entry.mark != RefMark::Unused && !entry.needed_for_output));
+        dpb.flush(&mut output);
+        assert_eq!(output.len(), 3);
+    }
+
+    #[test]
+    fn idr_output_policy_flushes_or_discards_existing_frames() {
+        for discard in [false, true] {
+            let mut dpb = Dpb::new();
+            dpb.entries.push(entry(1, 25, RefMark::Short, true));
+            dpb.entries.push(entry(2, 5, RefMark::Long, true));
+            dpb.max_long_term_frame_idx = Some(3);
+            let mut output = Vec::new();
+            dpb.idr(discard, &mut output);
+            assert_eq!(output.iter().map(|frame| frame.poc).collect::<Vec<_>>(), if discard { vec![] } else { vec![5, 25] });
+            assert!(dpb.entries.is_empty());
+            assert_eq!(dpb.max_long_term_frame_idx, None);
+        }
+    }
+
     #[test]
     fn empty_dpb_flush_is_idempotent_and_produces_no_output() {
         let mut dpb = Dpb::new();
