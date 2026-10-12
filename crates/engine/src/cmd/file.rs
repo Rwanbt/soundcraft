@@ -27,9 +27,8 @@ pub fn specs() -> Vec<CommandSpec> {
         }),
         cmd!(noundo "session.save_copy", "Save Session Copy In...", ["File"], None, "{path}", always, |e, p| {
             let path = str_param(p, "path").ok_or_else(|| bad("session.save_copy", "`path` required"))?.to_string();
-            let keep = e.path.clone();
-            let written = crate::io::save_session(e, &path)?;
-            e.path = keep;
+            // Saving a copy must not rename, mark clean or otherwise mutate the active session.
+            let written = crate::io::save_copy(e, &path)?;
             Ok(json!({"path": path, "audio_files_written": written}))
         }),
         cmd!(noundo "session.save_template", "Save As Template...", ["File"], None, "{path}", always, |e, p| {
