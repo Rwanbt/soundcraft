@@ -11,7 +11,7 @@ pub mod mcp;
 
 use serde_json::{Value, json};
 use soundcraft_engine::Engine;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::time::Duration;
 
@@ -92,18 +92,40 @@ impl Remote {
     }
 
     fn roundtrip(&mut self, method: &str, params: &Value) -> Result<Value, String> {
-        self.connect()?;
         let id = self.next_id;
-        self.next_id += 1;
         let line = json!({"id": id, "method": method, "params": params}).to_string();
-        let (w, r) = self.conn.as_mut().ok_or("not connected")?;
-        writeln!(w, "{line}").map_err(|e| e.to_string())?;
-        let mut buf = String::new();
-        r.read_line(&mut buf).map_err(|e| e.to_string())?;
-        if buf.is_empty() {
-            return Err("connection closed".into());
+        // The desktop server accepts at most 1 MiB per JSON-lines request, newline included.
+        if line.len().saturating_add(1) > 1024 * 1024 {
+            return Err("control request exceeds 1 MiB limit".into());
         }
-        let v: Value = serde_json::from_str(&buf).map_err(|e| e.to_string())?;
+        self.connect()?;
+        self.next_id = self.next_id.wrapping_add(1);
+
+        let received = (|| -> Result<Value, String> {
+            let (w, r) = self.conn.as_mut().ok_or("not connected")?;
+            writeln!(w, "{line}").map_err(|e| e.to_string())?;
+            // Do not allocate an unbounded String for a malformed or hostile response.
+            let mut buf = Vec::new();
+            let limit = 8 * 1024 * 1024;
+            r.take((limit + 1) as u64).read_until(b'\n', &mut buf).map_err(|e| e.to_string())?;
+            if buf.len() > limit {
+                return Err("control response exceeds 8 MiB limit".into());
+            }
+            if buf.last() != Some(&b'\n') {
+                return Err("connection closed before complete control response".into());
+            }
+            let v: Value = serde_json::from_slice(&buf).map_err(|e| format!("invalid control response: {e}"))?;
+            if v.get("id") != Some(&json!(id)) {
+                return Err(format!("control response id mismatch: expected {id}"));
+            }
+            Ok(v)
+        })();
+        // Bad frames and I/O errors poison the connection; the *next explicit call* may
+        // reconnect, but we must never replay a command that may already have executed.
+        if received.is_err() {
+            self.conn = None;
+        }
+        let v = received?;
         if v.get("ok").and_then(Value::as_bool).unwrap_or(false) {
             Ok(v.get("result").cloned().unwrap_or(Value::Null))
         } else {
@@ -114,15 +136,7 @@ impl Remote {
 
 impl Backend for Remote {
     fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
-        match self.roundtrip(method, &params) {
-            Ok(v) => Ok(v),
-            Err(e) if e.contains("closed") || e.contains("Broken pipe") || e.contains("reset") => {
-                // Retry once on a fresh connection.
-                self.conn = None;
-                self.roundtrip(method, &params)
-            }
-            Err(e) => Err(e),
-        }
+        self.roundtrip(method, &params)
     }
     fn has_ui(&self) -> bool {
         true
