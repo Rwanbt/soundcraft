@@ -493,6 +493,10 @@ impl Session {
         }
         let mut s: Session = serde_json::from_value(v).map_err(|e| SessionError::Format(e.to_string()))?;
         s.sanitize();
+        // Deserialize bypasses SampleRate::new's 8 kHz..768 kHz contract.
+        if SampleRate::new(s.sample_rate.hz()).is_err() {
+            return Err(SessionError::Invalid(format!("unsupported session sample rate {} Hz", s.sample_rate.hz())));
+        }
         s.validate_loaded_ids()?;
         Ok(s)
     }
