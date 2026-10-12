@@ -423,6 +423,121 @@ impl Default for Dpb {
 mod tests {
     use super::*;
 
+    fn entry(id: u32, poc: i32, frame_num: u32, mark: RefMark, output: bool) -> DpbEntry {
+        DpbEntry {
+            frame: Arc::new(crate::h264::picture::Frame::new(id, poc, 1, 1)),
+            poc,
+            frame_num,
+            long_term_frame_idx: 0,
+            mark,
+            needed_for_output: output,
+            non_existing: false,
+            meta: Arc::new(OutputMeta {
+                pts: i64::from(poc),
+                key: false,
+                crop: (0, 0, 16, 16),
+                full_range: false,
+                colour_primaries: 2,
+                transfer_characteristics: 2,
+                matrix_coefficients: 2,
+                sar: (1, 1),
+                draft: false,
+            }),
+        }
+    }
+
+    #[test]
+    fn flush_bumps_in_poc_order_and_preserves_references_without_reoutput() {
+        let mut dpb = Dpb::new();
+        dpb.entries = vec![
+            entry(1, 20, 3, RefMark::Short, true),
+            entry(2, -10, 0, RefMark::Unused, true),
+            entry(3, 4, 2, RefMark::Long, true),
+            entry(4, 1, 1, RefMark::Unused, false),
+        ];
+        let mut output = Vec::new();
+        dpb.flush(&mut output);
+        assert_eq!(output.iter().map(|o| o.poc).collect::<Vec<_>>(), vec![-10, 4, 20]);
+        assert_eq!(output.iter().map(|o| o.frame.id).collect::<Vec<_>>(), vec![2, 3, 1]);
+        assert_eq!(output.iter().map(|o| o.meta.pts).collect::<Vec<_>>(), vec![-10, 4, 20]);
+        assert_eq!(dpb.entries.len(), 2);
+        assert_eq!(dpb.num_refs(), 2);
+        assert!(dpb.entries.iter().all(|e| !e.needed_for_output));
+        dpb.flush(&mut output);
+        assert_eq!(output.len(), 3);
+    }
+
+    #[test]
+    fn idr_can_flush_or_discard_waiting_pictures_without_leaking_references() {
+        for discard in [false, true] {
+            let mut dpb = Dpb::new();
+            dpb.max_long_term_frame_idx = Some(7);
+            dpb.entries = vec![
+                entry(1, 12, 1, RefMark::Short, true),
+                entry(2, -3, 2, RefMark::Long, true),
+                entry(3, 5, 3, RefMark::Short, false),
+            ];
+            let mut output = Vec::new();
+            dpb.idr(discard, &mut output);
+            let actual: Vec<i32> = output.iter().map(|o| o.poc).collect();
+            assert_eq!(actual, if discard { vec![] } else { vec![-3, 12] });
+            assert!(dpb.entries.is_empty());
+            assert_eq!(dpb.num_refs(), 0);
+            assert_eq!(dpb.max_long_term_frame_idx, None);
+        }
+    }
+
+    #[test]
+    fn sliding_window_evicts_oldest_wrapped_short_refs_but_retains_long_refs() {
+        let mut dpb = Dpb::new();
+        dpb.entries = vec![
+            entry(1, 1, 14, RefMark::Short, true),
+            entry(2, 2, 0, RefMark::Short, false),
+            entry(3, 3, 1, RefMark::Long, false),
+        ];
+        dpb.sliding_window(1, 16, 3);
+        assert_eq!(dpb.num_refs(), 2);
+        assert_eq!(dpb.entries.iter().find(|e| e.frame.id == 1).unwrap().mark, RefMark::Unused);
+        assert_eq!(dpb.entries.iter().find(|e| e.frame.id == 2).unwrap().mark, RefMark::Short);
+        dpb.sliding_window(1, 16, 2);
+        assert_eq!(dpb.num_refs(), 1);
+        assert!(dpb.entries.iter().all(|e| e.frame.id != 2));
+        dpb.sliding_window(1, 16, 1);
+        assert_eq!(dpb.num_refs(), 1);
+        let mut output = Vec::new();
+        dpb.flush(&mut output);
+        assert_eq!(output.iter().map(|o| o.frame.id).collect::<Vec<_>>(), vec![1]);
+    }
+
+    #[test]
+    fn frame_num_gap_synthesizes_wrapped_nonexisting_reference_frames() {
+        let mut dpb = Dpb::new();
+        let mut made = Vec::new();
+        let mut advanced = Vec::new();
+        dpb.fill_frame_num_gap(
+            14,
+            2,
+            16,
+            4,
+            &mut |n| {
+                made.push(n);
+                let e = entry(n, n as i32, n, RefMark::Short, false);
+                (e.frame, e.meta)
+            },
+            &mut |n| advanced.push(n),
+        );
+        assert_eq!(made, vec![15, 0, 1]);
+        assert_eq!(advanced, made);
+        assert_eq!(dpb.entries.iter().map(|e| e.frame_num).collect::<Vec<_>>(), made);
+        assert_eq!(dpb.num_refs(), 3);
+        assert!(dpb.entries.iter().all(|e| e.non_existing && !e.needed_for_output && e.mark == RefMark::Short));
+        let mut output = Vec::new();
+        dpb.flush(&mut output);
+        assert!(output.is_empty());
+        dpb.fill_frame_num_gap(1, 2, 16, 4, &mut |_| panic!("no gap to fill"), &mut |_| panic!("no gap to advance"));
+        assert_eq!(dpb.num_refs(), 3);
+    }
+
     #[test]
     fn empty_dpb_flush_is_idempotent_and_produces_no_output() {
         let mut dpb = Dpb::new();
