@@ -493,7 +493,41 @@ impl Session {
         }
         let mut s: Session = serde_json::from_value(v).map_err(|e| SessionError::Format(e.to_string()))?;
         s.sanitize();
+        // Deserialize bypasses SampleRate::new's 8 kHz..768 kHz contract.
+        if SampleRate::new(s.sample_rate.hz()).is_err() {
+            return Err(SessionError::Invalid(format!("unsupported session sample rate {} Hz", s.sample_rate.hz())));
+        }
+        s.validate_loaded_ids()?;
         Ok(s)
+    }
+
+    /// Reject ambiguous identity records before they can corrupt editing or media relinking.
+    /// IDs are allocated globally for these entities by Session::alloc.
+    fn validate_loaded_ids(&self) -> Result<(), SessionError> {
+        let mut used = std::collections::BTreeSet::new();
+        let ids = self
+            .tracks
+            .iter()
+            .map(|t| t.id.0)
+            .chain(self.sources.iter().map(|s| s.id.0))
+            .chain(self.videos.iter().map(|v| v.id.0))
+            .chain(self.busses.iter().map(|b| b.id.0))
+            .chain(self.markers.iter().map(|m| m.id.0))
+            .chain(self.groups.iter().map(|g| g.id.0));
+        for id in ids {
+            if id == 0 {
+                return Err(SessionError::Invalid("session contains a reserved zero identifier".into()));
+            }
+            if !used.insert(id) {
+                return Err(SessionError::Invalid(format!("duplicate session object id {id}")));
+            }
+        }
+        // alloc() uses a saturating counter: at MAX it would return MAX forever.
+        // The sanitize pass advances next_id past every track, clip and source ID.
+        if self.next_id == u64::MAX {
+            return Err(SessionError::Invalid("session identifier counter is exhausted".into()));
+        }
+        Ok(())
     }
 
     /// Repair invariants after loading untrusted data.
