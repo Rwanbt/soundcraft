@@ -221,6 +221,7 @@ pub fn trim_to(s: &mut Session, track: TrackId, range: Range) -> usize {
             n += 1;
         }
     }
+    pl.sort();
     n
 }
 
@@ -238,6 +239,7 @@ pub fn trim_start_to(s: &mut Session, track: TrackId, at: Samples) -> usize {
             n += 1;
         }
     }
+    pl.sort();
     n
 }
 
@@ -399,6 +401,8 @@ pub fn delete_fades(s: &mut Session, track: TrackId, range: Range) -> usize {
             }
         }
     }
+    // Trimming a later overlapping clip can move its start beyond another neighbour.
+    pl.sort();
     n
 }
 
@@ -498,6 +502,25 @@ mod tests {
         delete_fades(&mut s, t, Range::new(2900, 3100));
         let c = s.track(t).unwrap().clips();
         assert_eq!((c[0].end(), c[1].start), (3000, 3000));
+    }
+
+    #[test]
+    fn deleting_fades_preserves_playlist_order_with_nested_overlaps() {
+        let (mut s, t) = session_with_clip();
+        let second = s.new_clip_id();
+        let third = s.new_clip_id();
+        let pl = s.track_mut(t).unwrap().playlist_mut().unwrap();
+        pl.clips[0].start = 0;
+        pl.clips[0].length = 10_000;
+        pl.clips.push(Clip::audio(second, "b", SourceId(500), 100, 0, 9_000));
+        pl.clips.push(Clip::audio(third, "c", SourceId(500), 200, 0, 1_000));
+        pl.sort();
+
+        delete_fades(&mut s, t, Range::new(0, 10_000));
+        let clips = s.track(t).unwrap().clips();
+        assert_eq!(clips.len(), 3);
+        assert!(clips.windows(2).all(|pair| pair[0].start <= pair[1].start));
+        assert!(clips.iter().all(|clip| clip.length > 0));
     }
 
     #[test]
