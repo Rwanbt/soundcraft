@@ -52,6 +52,7 @@ impl Recorder {
         let sh = Arc::clone(&shared);
         let monitor = InputRing::new(usize::from(config.channels), config.sample_rate.0);
         let mon = Arc::clone(&monitor);
+        let input_channels = usize::from(config.channels).max(1);
         let mut backlog: Vec<f32> = Vec::new();
         let stream = device
             .build_input_stream(
@@ -59,7 +60,7 @@ impl Recorder {
                 move |data: &[f32], _: &cpal::InputCallbackInfo| {
                     crate::mark_audio_thread();
                     mon.push(data);
-                    append_captured(&sh, &mut backlog, data, MAX_SAMPLES, 1 << 20, usize::from(config.channels));
+                    append_captured(&sh, &mut backlog, data, MAX_SAMPLES, 1 << 20, input_channels);
                 },
                 |e| {
                     // Possibly the audio thread (see `crate::mark_audio_thread`).
