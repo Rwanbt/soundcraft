@@ -436,16 +436,7 @@ mod tests {
             sar: (1, 1),
             draft: false,
         });
-        DpbEntry {
-            frame,
-            poc,
-            frame_num: id,
-            long_term_frame_idx: 0,
-            mark,
-            needed_for_output,
-            non_existing: false,
-            meta,
-        }
+        DpbEntry { frame, poc, frame_num: id, long_term_frame_idx: 0, mark, needed_for_output, non_existing: false, meta }
     }
 
     #[test]
