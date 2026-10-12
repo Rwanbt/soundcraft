@@ -570,6 +570,43 @@ mod tests {
     }
 
     #[test]
+    fn mmco_five_resets_reference_marks_but_retains_pending_output() {
+        let mut dpb = Dpb::new();
+        dpb.entries.push(entry(1, 10, RefMark::Short, true));
+        dpb.entries.push(entry(2, 20, RefMark::Long, false));
+        dpb.max_long_term_frame_idx = Some(3);
+        let cmd = Mmco { op: 5, difference_of_pic_nums_minus1: 0, long_term_pic_num: 0, long_term_frame_idx: 0, max_long_term_frame_idx_plus1: 0 };
+        let mut cur_long = None;
+        assert!(dpb.apply_mmcos(&[cmd], 3, 16, &mut cur_long));
+        assert_eq!(cur_long, None);
+        assert_eq!(dpb.max_long_term_frame_idx, None);
+        assert_eq!(dpb.num_refs(), 0);
+        assert_eq!(dpb.entries.len(), 1);
+        assert!(dpb.entries[0].needed_for_output);
+        let mut output = Vec::new();
+        dpb.flush(&mut output);
+        assert_eq!(output.iter().map(|e| e.poc).collect::<Vec<_>>(), vec![10]);
+        assert!(dpb.entries.is_empty());
+    }
+
+    #[test]
+    fn mmco_two_removes_only_requested_long_term_picture() {
+        let mut dpb = Dpb::new();
+        dpb.entries.push(entry(1, 10, RefMark::Short, false));
+        let mut first = entry(2, 20, RefMark::Long, false);
+        first.long_term_frame_idx = 3;
+        dpb.entries.push(first);
+        let mut other = entry(3, 30, RefMark::Long, false);
+        other.long_term_frame_idx = 4;
+        dpb.entries.push(other);
+        let cmd = Mmco { op: 2, difference_of_pic_nums_minus1: 0, long_term_pic_num: 3, long_term_frame_idx: 0, max_long_term_frame_idx_plus1: 0 };
+        let mut cur_long = None;
+        assert!(!dpb.apply_mmcos(&[cmd], 5, 16, &mut cur_long));
+        assert_eq!(dpb.entries.iter().map(|e| e.frame_num).collect::<Vec<_>>(), vec![1, 3]);
+        assert_eq!(dpb.num_refs(), 2);
+    }
+
+    #[test]
     fn empty_dpb_flush_is_idempotent_and_produces_no_output() {
         let mut dpb = Dpb::new();
         let mut output = Vec::new();
