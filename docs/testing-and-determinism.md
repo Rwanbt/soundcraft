@@ -4,6 +4,11 @@ This document distinguishes tested behaviour from aspirational parity. A green u
 suite is not evidence that an audio workstation is production-ready or works with every
 driver or third-party plugin.
 
+For the fork's package-level **measured coverage matrix**, CI SHA attribution and explicit
+remaining-risk gates, see [quality evidence](quality/FEATURE-TEST-MATRIX.md) and
+[remaining risks](quality/REMAINING-RISKS.md). These are dated snapshots, not proof of
+production readiness or a substitute for the live Actions status.
+
 ## Local checks
 
 From the repository root:
