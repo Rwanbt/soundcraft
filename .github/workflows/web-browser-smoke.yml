@@ -40,8 +40,10 @@ jobs:
           node-version: '22'
       - name: Install Trunk
         run: |
-          curl -fsSL "https://github.com/trunk-rs/trunk/releases/download/v${TRUNK_VERSION}/trunk-x86_64-unknown-linux-gnu.tar.gz" |
-            tar -xz -C "$HOME/.cargo/bin" trunk
+          curl --fail --silent --show-error --location --retry 5 --retry-all-errors --retry-delay 3 \
+            --output "$RUNNER_TEMP/trunk.tar.gz" \
+            "https://github.com/trunk-rs/trunk/releases/download/v${TRUNK_VERSION}/trunk-x86_64-unknown-linux-gnu.tar.gz"
+          tar -xz -C "$HOME/.cargo/bin" -f "$RUNNER_TEMP/trunk.tar.gz" trunk
           trunk --version
       - name: Build real web application
         working-directory: apps/soundcraft-web
