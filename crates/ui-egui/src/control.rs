@@ -514,10 +514,7 @@ mod screenshot_storage_regressions {
 
     #[test]
     fn serializing_screenshot_to_a_file_roundtrips_valid_rgba_png() {
-        let image = egui::ColorImage::from_rgba_unmultiplied([2, 2], &[
-            255, 0, 0, 255, 0, 255, 0, 255,
-            0, 0, 255, 255, 255, 255, 255, 255,
-        ]);
+        let image = egui::ColorImage::from_rgba_unmultiplied([2, 2], &[255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255]);
         let dir = std::env::temp_dir().join(format!("soundcraft-shot-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("image.png");
@@ -535,10 +532,8 @@ mod screenshot_storage_regressions {
 
     #[test]
     fn invalid_rgba_dimensions_produce_structured_errors_not_panics() {
-        let image = egui::ColorImage {
-            size: [2, 2],
-            pixels: vec![egui::Color32::RED],
-        };
+        let mut image = egui::ColorImage::from_rgba_unmultiplied([2, 2], &[255; 16]);
+        image.pixels.truncate(1);
         assert!(png_bytes(&image).is_err());
         let result = encode(&image, None);
         assert_eq!(result["ok"], false);
