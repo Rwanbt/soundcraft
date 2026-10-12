@@ -472,6 +472,36 @@ mod tests {
     }
 
     #[test]
+    fn sliding_window_evicts_oldest_short_reference_across_wraparound() {
+        let mut dpb = Dpb::new();
+        dpb.entries.push(entry(14, 14, RefMark::Short, false));
+        dpb.entries.push(entry(15, 15, RefMark::Short, false));
+        dpb.entries.push(entry(0, 16, RefMark::Short, false));
+        dpb.sliding_window(1, 16, 3);
+        assert_eq!(dpb.entries.iter().map(|e| e.frame_num).collect::<Vec<_>>(), vec![15, 0]);
+        assert_eq!(dpb.num_refs(), 2);
+    }
+
+    #[test]
+    fn sliding_window_preserves_long_term_references_and_pending_output() {
+        let mut dpb = Dpb::new();
+        dpb.entries.push(entry(1, 1, RefMark::Long, false));
+        dpb.entries.push(entry(2, 2, RefMark::Short, true));
+        dpb.entries.push(entry(3, 3, RefMark::Short, false));
+        dpb.sliding_window(4, 16, 3);
+        assert_eq!(dpb.num_refs(), 2);
+        assert_eq!(dpb.entries.len(), 3);
+        assert_eq!(dpb.entries[0].mark, RefMark::Long);
+        assert_eq!(dpb.entries[1].mark, RefMark::Unused);
+        assert!(dpb.entries[1].needed_for_output);
+        assert_eq!(dpb.entries[2].mark, RefMark::Short);
+        let mut output = Vec::new();
+        dpb.flush(&mut output);
+        assert_eq!(output.iter().map(|e| e.poc).collect::<Vec<_>>(), vec![2]);
+        assert_eq!(dpb.entries.len(), 2);
+    }
+
+    #[test]
     fn empty_dpb_flush_is_idempotent_and_produces_no_output() {
         let mut dpb = Dpb::new();
         let mut output = Vec::new();
