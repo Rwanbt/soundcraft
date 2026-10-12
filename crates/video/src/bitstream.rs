@@ -446,6 +446,45 @@ mod tests {
     }
 
     #[test]
+    fn exp_golomb_unsigned_boundary_codes_roundtrip() {
+        let cases = [0, 1, 2, 3, 127, 128, 255, 256, 65_535, 65_536, u32::MAX - 1, u32::MAX];
+        let mut writer = BitWriter::new();
+        for &value in &cases {
+            writer.write_ue(value);
+        }
+        let bytes = writer.finish();
+        let mut reader = BitReader::new(&bytes);
+        for &value in &cases {
+            assert_eq!(reader.read_ue(), Ok(value), "value {value}");
+        }
+    }
+
+    #[test]
+    fn exp_golomb_signed_boundaries_roundtrip() {
+        let cases = [0, 1, -1, 2, -2, i32::MAX, i32::MIN + 1, i32::MIN];
+        let mut writer = BitWriter::new();
+        for &value in &cases {
+            writer.write_se(value);
+        }
+        let bytes = writer.finish();
+        let mut reader = BitReader::new(&bytes);
+        for &value in &cases {
+            assert_eq!(reader.read_se(), Ok(value), "value {value}");
+        }
+    }
+
+    #[test]
+    fn oversized_exp_golomb_prefix_and_truncated_code_are_errors() {
+        let mut oversized = BitReader::new(&[0, 0, 0, 0, 0, 0x80]);
+        assert_eq!(oversized.read_ue(), Err(BitError::InvalidExpGolomb));
+        for zero_bytes in 0..=4 {
+            let data = vec![0u8; zero_bytes];
+            let mut reader = BitReader::new(&data);
+            assert_eq!(reader.read_ue(), Err(BitError::Eof), "zero bytes {zero_bytes}");
+        }
+    }
+
+    #[test]
     fn crc() {
         assert_eq!(crc32(b"123456789"), 0xCBF4_3926);
     }
