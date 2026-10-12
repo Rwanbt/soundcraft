@@ -447,13 +447,7 @@ mod tests {
     }
 
     fn mmco(op: u32) -> Mmco {
-        Mmco {
-            op,
-            difference_of_pic_nums_minus1: 0,
-            long_term_pic_num: 0,
-            long_term_frame_idx: 0,
-            max_long_term_frame_idx_plus1: 0,
-        }
+        Mmco { op, difference_of_pic_nums_minus1: 0, long_term_pic_num: 0, long_term_frame_idx: 0, max_long_term_frame_idx_plus1: 0 }
     }
 
     #[test]
