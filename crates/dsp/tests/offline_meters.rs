@@ -183,6 +183,51 @@ fn simple_offline_ops() {
 }
 
 #[test]
+fn remove_dc_uses_only_finite_samples_for_the_mean() {
+    let mut channels = vec![vec![1.0f32, 3.0, f32::NAN, f32::INFINITY, f32::NEG_INFINITY], vec![0.25, f32::NAN, 0.75]];
+    offline::remove_dc(&mut channels);
+
+    // A finite-only reference: (1 + 3)/2 = 2, not (1 + 3)/5 = 0.8.
+    assert_eq!(&channels[0][..2], &[-1.0, 1.0]);
+    assert!(channels[0][2].is_nan());
+    assert_eq!(channels[0][3], f32::INFINITY);
+    assert_eq!(channels[0][4], f32::NEG_INFINITY);
+
+    assert_eq!(channels[1][0], -0.25);
+    assert!(channels[1][1].is_nan());
+    assert_eq!(channels[1][2], 0.25);
+}
+
+#[test]
+fn remove_dc_preserves_empty_and_all_nonfinite_channels_and_centers_constants() {
+    let mut channels = vec![vec![], vec![f32::NAN, f32::INFINITY], vec![0.375; 1024], vec![-0.5; 16]];
+    offline::remove_dc(&mut channels);
+
+    assert!(channels[0].is_empty());
+    assert!(channels[1][0].is_nan());
+    assert_eq!(channels[1][1], f32::INFINITY);
+    assert!(channels[2].iter().all(|&sample| sample == 0.0));
+    assert!(channels[3].iter().all(|&sample| sample == 0.0));
+}
+
+#[test]
+fn remove_dc_centers_mixed_finite_data_independently_per_channel() {
+    let mut channels = vec![
+        (0..1024).map(|i| 2.0 + (i % 5) as f32 / 8.0).collect::<Vec<f32>>(),
+        (0..1024).map(|i| -1.0 - (i % 7) as f32 / 16.0).collect::<Vec<f32>>(),
+    ];
+    channels[0][17] = f32::NAN;
+    channels[1][31] = f32::INFINITY;
+
+    offline::remove_dc(&mut channels);
+    for channel in &channels {
+        let finite: Vec<f64> = channel.iter().filter(|v| v.is_finite()).map(|&v| f64::from(v)).collect();
+        let mean = finite.iter().sum::<f64>() / finite.len() as f64;
+        assert!(mean.abs() < 1e-6, "finite samples retained a DC bias of {mean}");
+    }
+}
+
+#[test]
 fn non_silent_ranges_finds_bursts() {
     let sr = 48_000.0;
     let mut x = vec![0.0f32; 48_000];
