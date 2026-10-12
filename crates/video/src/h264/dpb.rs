@@ -133,7 +133,10 @@ impl Dpb {
         make_frame: &mut dyn FnMut(u32) -> (FrameRef, Arc<OutputMeta>),
         poc_state: &mut dyn FnMut(u32),
     ) {
-        let mut unused = (prev_ref_frame_num + 1) % max_frame_num;
+        if max_frame_num == 0 {
+            return;
+        }
+        let mut unused = (prev_ref_frame_num % max_frame_num + 1) % max_frame_num;
         let mut guard = 0;
         while unused != frame_num && guard < max_frame_num {
             self.sliding_window(unused, max_frame_num, max_num_ref_frames);
@@ -574,6 +577,38 @@ mod tests {
         let mut output = Vec::new();
         dpb.flush(&mut output);
         assert_eq!(output.iter().map(|o| o.frame.id).collect::<Vec<_>>(), vec![1]);
+    }
+
+    #[test]
+    fn frame_num_gap_handles_zero_modulus_and_extreme_previous_number() {
+        let mut dpb = Dpb::new();
+        let mut generated = Vec::new();
+        let mut advanced = Vec::new();
+        dpb.fill_frame_num_gap(
+            0,
+            1,
+            0,
+            4,
+            &mut |_| panic!("zero modulus must not generate frames"),
+            &mut |_| panic!("zero modulus must not advance POC"),
+        );
+        assert!(dpb.entries.is_empty());
+
+        dpb.fill_frame_num_gap(
+            u32::MAX,
+            2,
+            16,
+            4,
+            &mut |n| {
+                generated.push(n);
+                let e = entry(n, n as i32, n, RefMark::Short, false);
+                (e.frame, e.meta)
+            },
+            &mut |n| advanced.push(n),
+        );
+        assert_eq!(generated, vec![0, 1]);
+        assert_eq!(advanced, generated);
+        assert_eq!(dpb.num_refs(), 2);
     }
 
     #[test]
