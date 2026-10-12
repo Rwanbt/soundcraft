@@ -446,6 +446,75 @@ mod tests {
         }
     }
 
+    fn mmco(op: u32) -> Mmco {
+        Mmco { op, difference_of_pic_nums_minus1: 0, long_term_pic_num: 0, long_term_frame_idx: 0, max_long_term_frame_idx_plus1: 0 }
+    }
+
+    #[test]
+    fn mmco_1_and_2_unmark_only_the_targeted_reference_pictures() {
+        let mut dpb = Dpb::new();
+        dpb.entries = vec![entry(1, 1, 3, RefMark::Short, false), entry(2, 2, 2, RefMark::Short, false)];
+        let mut long = entry(3, 3, 1, RefMark::Long, false);
+        long.long_term_frame_idx = 7;
+        dpb.entries.push(long);
+        let mut cur_long = None;
+
+        assert!(!dpb.apply_mmcos(&[mmco(1)], 4, 16, &mut cur_long));
+        assert_eq!(dpb.entries.iter().map(|e| e.frame.id).collect::<Vec<_>>(), vec![2, 3]);
+        let mut remove_long = mmco(2);
+        remove_long.long_term_pic_num = 7;
+        assert!(!dpb.apply_mmcos(&[remove_long], 4, 16, &mut cur_long));
+        assert_eq!(dpb.entries.iter().map(|e| e.frame.id).collect::<Vec<_>>(), vec![2]);
+        assert_eq!(cur_long, None);
+    }
+
+    #[test]
+    fn mmco_3_replaces_long_term_slot_with_a_short_term_picture() {
+        let mut dpb = Dpb::new();
+        let mut displaced = entry(1, 10, 1, RefMark::Long, false);
+        displaced.long_term_frame_idx = 2;
+        dpb.entries.push(displaced);
+        dpb.entries.push(entry(2, 20, 3, RefMark::Short, false));
+        let mut convert = mmco(3);
+        convert.long_term_frame_idx = 2;
+        let mut cur_long = None;
+
+        assert!(!dpb.apply_mmcos(&[convert], 4, 16, &mut cur_long));
+        assert_eq!(dpb.entries.len(), 1);
+        assert_eq!(dpb.entries[0].frame.id, 2);
+        assert_eq!(dpb.entries[0].mark, RefMark::Long);
+        assert_eq!(dpb.entries[0].long_term_frame_idx, 2);
+    }
+
+    #[test]
+    fn mmco_4_5_and_6_enforce_long_term_limits_and_clear_prior_references() {
+        let mut dpb = Dpb::new();
+        for idx in 0..4 {
+            let mut reference = entry(idx + 1, idx as i32, idx, RefMark::Long, false);
+            reference.long_term_frame_idx = idx;
+            dpb.entries.push(reference);
+        }
+        let mut cur_long = None;
+        let mut limit = mmco(4);
+        limit.max_long_term_frame_idx_plus1 = 2;
+        assert!(!dpb.apply_mmcos(&[limit], 4, 16, &mut cur_long));
+        assert_eq!(dpb.max_long_term_frame_idx, Some(1));
+        assert_eq!(dpb.entries.iter().map(|e| e.long_term_frame_idx).collect::<Vec<_>>(), vec![0, 1]);
+
+        let mut assign = mmco(6);
+        assign.long_term_frame_idx = 1;
+        assert!(!dpb.apply_mmcos(&[assign], 4, 16, &mut cur_long));
+        assert_eq!(cur_long, Some(1));
+        assert_eq!(dpb.num_refs(), 1);
+
+        dpb.entries[0].needed_for_output = true;
+        assert!(dpb.apply_mmcos(&[mmco(5)], 4, 16, &mut cur_long));
+        assert_eq!(dpb.max_long_term_frame_idx, None);
+        assert_eq!(dpb.num_refs(), 0);
+        assert_eq!(dpb.entries.len(), 1);
+        assert!(dpb.entries[0].needed_for_output);
+    }
+
     #[test]
     fn flush_bumps_in_poc_order_and_preserves_references_without_reoutput() {
         let mut dpb = Dpb::new();
