@@ -472,11 +472,7 @@ mod tests {
         for discard in [false, true] {
             let mut dpb = Dpb::new();
             dpb.max_long_term_frame_idx = Some(7);
-            dpb.entries = vec![
-                entry(1, 12, 1, RefMark::Short, true),
-                entry(2, -3, 2, RefMark::Long, true),
-                entry(3, 5, 3, RefMark::Short, false),
-            ];
+            dpb.entries = vec![entry(1, 12, 1, RefMark::Short, true), entry(2, -3, 2, RefMark::Long, true), entry(3, 5, 3, RefMark::Short, false)];
             let mut output = Vec::new();
             dpb.idr(discard, &mut output);
             let actual: Vec<i32> = output.iter().map(|o| o.poc).collect();
@@ -490,11 +486,7 @@ mod tests {
     #[test]
     fn sliding_window_evicts_oldest_wrapped_short_refs_but_retains_long_refs() {
         let mut dpb = Dpb::new();
-        dpb.entries = vec![
-            entry(1, 1, 14, RefMark::Short, true),
-            entry(2, 2, 0, RefMark::Short, false),
-            entry(3, 3, 1, RefMark::Long, false),
-        ];
+        dpb.entries = vec![entry(1, 1, 14, RefMark::Short, true), entry(2, 2, 0, RefMark::Short, false), entry(3, 3, 1, RefMark::Long, false)];
         dpb.sliding_window(1, 16, 3);
         assert_eq!(dpb.num_refs(), 2);
         assert_eq!(dpb.entries.iter().find(|e| e.frame.id == 1).unwrap().mark, RefMark::Unused);
