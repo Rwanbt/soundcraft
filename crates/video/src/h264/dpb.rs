@@ -450,13 +450,7 @@ mod tests {
     }
 
     fn mmco(op: u32) -> Mmco {
-        Mmco {
-            op,
-            difference_of_pic_nums_minus1: 0,
-            long_term_pic_num: 0,
-            long_term_frame_idx: 0,
-            max_long_term_frame_idx_plus1: 0,
-        }
+        Mmco { op, difference_of_pic_nums_minus1: 0, long_term_pic_num: 0, long_term_frame_idx: 0, max_long_term_frame_idx_plus1: 0 }
     }
 
     #[test]
@@ -584,14 +578,9 @@ mod tests {
         let mut dpb = Dpb::new();
         let mut generated = Vec::new();
         let mut advanced = Vec::new();
-        dpb.fill_frame_num_gap(
-            0,
-            1,
-            0,
-            4,
-            &mut |_| panic!("zero modulus must not generate frames"),
-            &mut |_| panic!("zero modulus must not advance POC"),
-        );
+        dpb.fill_frame_num_gap(0, 1, 0, 4, &mut |_| panic!("zero modulus must not generate frames"), &mut |_| {
+            panic!("zero modulus must not advance POC")
+        });
         assert!(dpb.entries.is_empty());
 
         dpb.fill_frame_num_gap(
