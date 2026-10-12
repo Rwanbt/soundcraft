@@ -545,6 +545,31 @@ mod tests {
     }
 
     #[test]
+    fn frame_num_gap_obeys_short_reference_limit_without_outputting_concealment() {
+        let mut dpb = Dpb::new();
+        let mut created = Vec::new();
+        dpb.fill_frame_num_gap(
+            0,
+            5,
+            16,
+            2,
+            &mut |num| {
+                created.push(num);
+                let e = entry(num, num as i32, RefMark::Short, false);
+                (e.frame, e.meta)
+            },
+            &mut |_| {},
+        );
+        assert_eq!(created, vec![1, 2, 3, 4]);
+        assert_eq!(dpb.entries.iter().map(|e| e.frame_num).collect::<Vec<_>>(), vec![3, 4]);
+        assert_eq!(dpb.num_refs(), 2);
+        let mut output = Vec::new();
+        dpb.flush(&mut output);
+        assert!(output.is_empty());
+        assert_eq!(dpb.entries.len(), 2);
+    }
+
+    #[test]
     fn empty_dpb_flush_is_idempotent_and_produces_no_output() {
         let mut dpb = Dpb::new();
         let mut output = Vec::new();
