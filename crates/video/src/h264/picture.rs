@@ -359,3 +359,107 @@ impl RefPic {
         self.frame.id
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plane_allocation_and_default_macroblock_state_are_deterministic() {
+        let planes = Planes::new(32, 16);
+        assert_eq!((planes.width, planes.height, planes.cwidth), (32, 16, 16));
+        assert_eq!(planes.y.len(), 512);
+        assert_eq!(planes.cb.len(), 128);
+        assert_eq!(planes.cr.len(), 128);
+        assert!(planes.y.iter().all(|&sample| sample == 0));
+        assert!(planes.cb.iter().chain(planes.cr.iter()).all(|&sample| sample == 128));
+        assert!(Planes::gray(16, 16).y.iter().all(|&sample| sample == 128));
+
+        let state = MbState::default();
+        assert_eq!(state.slice_num, u32::MAX);
+        assert_eq!(state.kind, MbKind::None);
+        assert!(!state.kind_is_skip());
+        assert_eq!(state.ref_idx, [[-1; 4]; 2]);
+        assert_eq!(state.intra_modes, [2; 16]);
+        for kind in [MbKind::I4x4, MbKind::I8x8, MbKind::I16x16, MbKind::IPcm] {
+            assert!(kind.is_intra());
+        }
+        for kind in [MbKind::PSkip, MbKind::BSkip, MbKind::BDirect16x16, MbKind::Inter] {
+            assert!(!kind.is_intra());
+        }
+    }
+
+    #[test]
+    fn decoded_frame_clamps_luma_and_chroma_windows_to_picture_edges() {
+        let mut planes = Planes::new(16, 16);
+        for (i, sample) in planes.y.iter_mut().enumerate() {
+            *sample = i as u8;
+        }
+        for (i, sample) in planes.cb.iter_mut().enumerate() {
+            *sample = i as u8 + 10;
+        }
+        for (i, sample) in planes.cr.iter_mut().enumerate() {
+            *sample = i as u8 + 100;
+        }
+        let frame = Frame::from_planes(7, -3, &planes);
+        assert_eq!((frame.id, frame.poc, frame.mb_w, frame.mb_h()), (7, -3, 1, 1));
+        assert!(frame.is_published(0));
+
+        let mut luma = [0; 12];
+        frame.luma_window(-1, -1, 4, 3, &mut luma, 4);
+        for row in 0..3 {
+            for col in 0..4 {
+                let source_y = (row as i32 - 1).max(0) as usize;
+                let source_x = (col as i32 - 1).max(0) as usize;
+                assert_eq!(luma[row * 4 + col], planes.y[source_y * 16 + source_x]);
+            }
+        }
+        let mut cb = [0; 6];
+        frame.chroma_window(0, 7, 7, 3, 2, &mut cb, 3);
+        assert!(cb.iter().all(|&sample| sample == planes.cb[63]));
+        let mut cr = [0; 6];
+        frame.chroma_window(1, -3, -3, 3, 2, &mut cr, 3);
+        assert!(cr.iter().all(|&sample| sample == planes.cr[0]));
+    }
+
+    #[test]
+    fn decoded_frame_crop_matches_source_plane_coordinates() {
+        let mut planes = Planes::new(16, 16);
+        for (i, sample) in planes.y.iter_mut().enumerate() {
+            *sample = i as u8;
+        }
+        for (i, sample) in planes.cb.iter_mut().enumerate() {
+            *sample = i as u8;
+        }
+        for (i, sample) in planes.cr.iter_mut().enumerate() {
+            *sample = (i as u8) + 64;
+        }
+        let frame = Frame::from_planes(9, 6, &planes);
+        let (y, cb, cr) = frame.copy_cropped((2, 2, 4, 4));
+        assert_eq!(y.len(), 16);
+        assert_eq!(cb.len(), 4);
+        assert_eq!(cr.len(), 4);
+        for row in 0..4 {
+            for col in 0..4 {
+                assert_eq!(y[row * 4 + col], planes.y[(row + 2) * 16 + col + 2]);
+            }
+        }
+        for row in 0..2 {
+            for col in 0..2 {
+                let source = (row + 1) * 8 + col + 1;
+                assert_eq!(cb[row * 2 + col], planes.cb[source]);
+                assert_eq!(cr[row * 2 + col], planes.cr[source]);
+            }
+        }
+    }
+
+    #[test]
+    fn pixel_edge_replication_handles_left_and_right_overflow() {
+        let src = [10, 20, 30];
+        let mut out = [0; 6];
+        copy_clamped(&src, -2, &mut out);
+        assert_eq!(out, [10, 10, 10, 20, 30, 30]);
+        copy_clamped(&src, 1, &mut out);
+        assert_eq!(out, [20, 30, 30, 30, 30, 30]);
+    }
+}
