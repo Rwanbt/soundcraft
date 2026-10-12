@@ -67,8 +67,9 @@ fn duplicate_source_names_are_saved_as_distinct_wav_files_and_reopen_without_dat
     assert_eq!(restored.session().pool.get(first).unwrap().buffer.channels[0], vec![0.25; 64]);
     assert_eq!(restored.session().pool.get(second).unwrap().buffer.channels[0], vec![-0.5; 64]);
 
+    let first_path = sources[0].path.clone();
     assert_eq!(io::save_session(&mut engine, text(&path)).unwrap(), 0);
-    assert_eq!(engine.session().sources[0].path, sources[0].path);
+    assert_eq!(engine.session().sources[0].path, first_path);
 }
 
 #[test]
