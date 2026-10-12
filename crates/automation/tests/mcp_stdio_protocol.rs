@@ -37,7 +37,8 @@ fn exactly_one_mebibyte_with_newline_is_a_valid_jsonrpc_frame() {
 
 #[test]
 fn malformed_utf8_does_not_break_stream_alignment() {
-    let input = b"{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\",\"extra\":\"\xff\"}\n{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"ping\"}\n".to_vec();
+    let input =
+        b"{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\",\"extra\":\"\xff\"}\n{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"ping\"}\n".to_vec();
     let responses = serve(input);
     assert_eq!(responses.len(), 2);
     assert_eq!(responses[0]["error"]["code"], -32700);
