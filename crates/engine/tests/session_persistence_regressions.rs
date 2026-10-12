@@ -35,13 +35,7 @@ fn text(path: &Path) -> &str {
 }
 
 fn add_audio(engine: &mut Engine, name: &str, amplitude: f32) -> soundcraft_model::SourceId {
-    io::add_source(
-        engine.session_mut(),
-        name,
-        AudioBuffer { sample_rate: 48_000, channels: vec![vec![amplitude; 64]] },
-        None,
-        FileFormat::Wav,
-    )
+    io::add_source(engine.session_mut(), name, AudioBuffer { sample_rate: 48_000, channels: vec![vec![amplitude; 64]] }, None, FileFormat::Wav)
 }
 
 #[test]
