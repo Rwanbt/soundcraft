@@ -254,7 +254,12 @@ pub fn collect_screenshots(app: &mut SoundApp, ctx: &egui::Context) {
 
 pub fn png_bytes(img: &egui::ColorImage) -> Result<Vec<u8>, String> {
     let [w, h] = img.size;
-    let mut raw = Vec::with_capacity(w * h * 4);
+    let pixels = w.checked_mul(h).ok_or("bad image size")?;
+    if pixels != img.pixels.len() {
+        return Err("bad image size".to_string());
+    }
+    let capacity = pixels.checked_mul(4).ok_or("bad image size")?;
+    let mut raw = Vec::with_capacity(capacity);
     for c in &img.pixels {
         raw.extend_from_slice(&c.to_array());
     }
@@ -538,6 +543,18 @@ mod screenshot_storage_regressions {
         let result = encode(&image, None);
         assert_eq!(result["ok"], false);
         assert!(result["error"].as_str().is_some_and(|s| s.contains("bad image size")));
+    }
+
+    #[test]
+    fn screenshot_rejects_overflowed_and_inconsistent_dimensions_without_allocating() {
+        let mut image = egui::ColorImage::from_rgba_unmultiplied([1, 1], &[255; 4]);
+        for size in [[usize::MAX, 2], [usize::MAX, 1], [0, 0], [2, 2]] {
+            image.size = size;
+            assert_eq!(png_bytes(&image).unwrap_err(), "bad image size", "{size:?}");
+            let result = encode(&image, None);
+            assert_eq!(result["ok"], false, "{size:?}");
+            assert_eq!(result["error"], "bad image size");
+        }
     }
 
     #[test]
