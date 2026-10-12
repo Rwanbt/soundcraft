@@ -320,6 +320,11 @@ impl InputRing {
 
     pub fn push(&self, samples: &[f32]) {
         if let Ok(mut s) = self.state.try_lock() {
+            // An input block ending mid-frame must not shift channel assignments for
+            // future callbacks. Retain only complete interleaved frames.
+            let ch = self.channels.load(Ordering::Relaxed).max(1);
+            let complete = samples.len() - samples.len() % ch;
+            let samples = &samples[..complete];
             // Never temporarily grow the FIFO to the input callback's size.
             // Its initial capacity already holds more than the configured half-second cap.
             let tail = if samples.len() > self.cap { &samples[samples.len() - self.cap..] } else { samples };
@@ -341,11 +346,14 @@ impl InputRing {
         let step = if self.rate == 0 || session_rate == 0 { 1.0 } else { f64::from(self.rate) / f64::from(session_rate) };
         for f in 0..frames {
             // Drop input frames we have moved past; keep the one at `phase` and the next one.
-            while s.phase >= 1.0 && s.data.len() >= 2 * ch {
+            while s.phase >= 1.0 && s.data.len() >= ch {
                 s.data.drain(..ch);
                 s.phase -= 1.0;
             }
-            if s.phase >= 1.0 || s.data.len() < 2 * ch {
+            // An exact-position sample does not need a look-ahead frame. Without
+            // this exception, every chunk loses its final frame even at equal rates.
+            // Fractional interpolation still waits for the next input frame.
+            if s.phase >= 1.0 || s.data.len() < ch || (s.phase > 0.0 && s.data.len() < 2 * ch) {
                 break;
             }
             let fr = s.phase as f32;
@@ -449,6 +457,47 @@ mod ring_tests {
         ring.pop_into(&mut out, 1, 48_000);
         assert_eq!(out[0][0], 0.1);
         assert_eq!(out[1][0], 0.2);
+    }
+
+    #[test]
+    fn monitor_outputs_final_complete_frame_once_at_equal_rates() {
+        let ring = InputRing::new(2, 48_000);
+        ring.push(&[0.1, -0.1, 0.2, -0.2]);
+        let mut out = vec![vec![7.0; 2], vec![7.0; 2]];
+        ring.pop_into(&mut out, 2, 48_000);
+        assert_eq!(out, vec![vec![0.1, 0.2], vec![-0.1, -0.2]]);
+
+        // The same sample must not be replayed by a later monitoring callback.
+        ring.pop_into(&mut out, 2, 48_000);
+        assert_eq!(out, vec![vec![0.0, 0.0], vec![0.0, 0.0]]);
+
+        ring.push(&[0.3, -0.3]);
+        ring.pop_into(&mut out, 2, 48_000);
+        assert_eq!(out, vec![vec![0.3, 0.0], vec![-0.3, 0.0]]);
+    }
+
+    #[test]
+    fn monitor_waits_for_next_input_before_fractional_interpolation() {
+        let ring = InputRing::new(1, 16_000);
+        ring.push(&[0.5]);
+        let mut out = vec![vec![7.0; 3]];
+        ring.pop_into(&mut out, 3, 48_000);
+        assert_eq!(out[0], vec![0.5, 0.0, 0.0]);
+
+        ring.push(&[1.0]);
+        ring.pop_into(&mut out, 2, 48_000);
+        assert!((out[0][0] - 2.0 / 3.0).abs() < 0.000_01);
+        assert!((out[0][1] - 5.0 / 6.0).abs() < 0.000_01);
+    }
+
+    #[test]
+    fn monitor_partial_stereo_callback_cannot_shift_future_channels() {
+        let ring = InputRing::new(2, 48_000);
+        ring.push(&[1.0, 2.0, 99.0]);
+        ring.push(&[3.0, 4.0]);
+        let mut out = vec![vec![0.0; 2], vec![0.0; 2]];
+        ring.pop_into(&mut out, 2, 48_000);
+        assert_eq!(out, vec![vec![1.0, 3.0], vec![2.0, 4.0]]);
     }
 
     #[test]
