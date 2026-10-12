@@ -502,6 +502,49 @@ mod tests {
     }
 
     #[test]
+    fn frame_num_gap_inserts_nonexisting_references_across_wraparound() {
+        let mut dpb = Dpb::new();
+        let mut created = Vec::new();
+        let mut advanced = Vec::new();
+        dpb.fill_frame_num_gap(
+            14,
+            2,
+            16,
+            4,
+            &mut |num| {
+                created.push(num);
+                let e = entry(num, num as i32, RefMark::Short, false);
+                (e.frame, e.meta)
+            },
+            &mut |num| advanced.push(num),
+        );
+        assert_eq!(created, vec![15, 0, 1]);
+        assert_eq!(advanced, created);
+        assert_eq!(dpb.entries.iter().map(|e| e.frame_num).collect::<Vec<_>>(), created);
+        assert!(dpb.entries.iter().all(|e| e.non_existing && e.mark == RefMark::Short && !e.needed_for_output));
+    }
+
+    #[test]
+    fn frame_num_gap_with_adjacent_numbers_does_not_create_references() {
+        let mut dpb = Dpb::new();
+        let mut calls = 0;
+        dpb.fill_frame_num_gap(
+            3,
+            4,
+            16,
+            4,
+            &mut |_| {
+                calls += 1;
+                let e = entry(0, 0, RefMark::Short, false);
+                (e.frame, e.meta)
+            },
+            &mut |_| {},
+        );
+        assert_eq!(calls, 0);
+        assert!(dpb.entries.is_empty());
+    }
+
+    #[test]
     fn empty_dpb_flush_is_idempotent_and_produces_no_output() {
         let mut dpb = Dpb::new();
         let mut output = Vec::new();
