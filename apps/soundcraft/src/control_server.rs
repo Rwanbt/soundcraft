@@ -5,6 +5,8 @@ use serde_json::{Value, json};
 use soundcraft_ui_egui::ControlRequest;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Duration;
 
@@ -20,17 +22,50 @@ pub fn start(port: u16, ctx: egui::Context) -> Receiver<ControlRequest> {
     let actual = listener.local_addr().map(|a| a.port()).unwrap_or(port);
     log::info!("control server listening on 127.0.0.1:{actual}");
     println!("SOUNDCRAFT_CONTROL_PORT={actual}");
+    let active = Arc::new(AtomicUsize::new(0));
     let spawned = std::thread::Builder::new().name("soundcraft-control".into()).spawn(move || {
         for stream in listener.incoming().flatten() {
+            let Some(permit) = ConnectionPermit::acquire(&active, MAX_CONTROL_CONNECTIONS) else {
+                // A peer must not be able to create unbounded blocked connection threads.
+                drop(stream);
+                continue;
+            };
             let tx = tx.clone();
             let ctx = ctx.clone();
-            let _ = std::thread::Builder::new().name("soundcraft-control-conn".into()).spawn(move || serve(stream, tx, ctx));
+            let spawned = std::thread::Builder::new().name("soundcraft-control-conn".into()).spawn(move || {
+                let _permit = permit;
+                serve(stream, tx, ctx);
+            });
+            if let Err(err) = spawned {
+                log::warn!("control connection thread failed: {err}");
+            }
         }
     });
     if let Err(e) = spawned {
         log::error!("control thread failed: {e}");
     }
     rx
+}
+
+/// Bound the per-client threads as well as the per-message byte allocation.
+const MAX_CONTROL_CONNECTIONS: usize = 32;
+
+/// An RAII permit releases a slot on EOF, send error, panic, or spawn failure.
+struct ConnectionPermit(Arc<AtomicUsize>);
+
+impl ConnectionPermit {
+    fn acquire(active: &Arc<AtomicUsize>, limit: usize) -> Option<Self> {
+        active
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| (count < limit).then_some(count + 1))
+            .ok()
+            .map(|_| Self(Arc::clone(active)))
+    }
+}
+
+impl Drop for ConnectionPermit {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
 }
 
 /// Includes the newline: large or unterminated JSON lines must not grow memory indefinitely.
@@ -115,6 +150,46 @@ fn serve(stream: TcpStream, tx: Sender<ControlRequest>, ctx: egui::Context) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn connection_limit_rejects_overflow_then_reuses_released_slot() {
+        let active = Arc::new(AtomicUsize::new(0));
+        let held: Vec<_> = (0..MAX_CONTROL_CONNECTIONS)
+            .map(|_| ConnectionPermit::acquire(&active, MAX_CONTROL_CONNECTIONS).unwrap())
+            .collect();
+        assert_eq!(active.load(Ordering::SeqCst), MAX_CONTROL_CONNECTIONS);
+        assert!(ConnectionPermit::acquire(&active, MAX_CONTROL_CONNECTIONS).is_none());
+        drop(held);
+        assert_eq!(active.load(Ordering::SeqCst), 0);
+        let acquired = ConnectionPermit::acquire(&active, MAX_CONTROL_CONNECTIONS).unwrap();
+        assert_eq!(active.load(Ordering::SeqCst), 1);
+        drop(acquired);
+        assert_eq!(active.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn connection_limit_is_atomic_under_concurrent_accepts() {
+        let active = Arc::new(AtomicUsize::new(0));
+        let start = Arc::new(std::sync::Barrier::new(17));
+        let release = Arc::new(std::sync::Barrier::new(17));
+        let mut handles = Vec::new();
+        for _ in 0..16 {
+            let active = Arc::clone(&active);
+            let start = Arc::clone(&start);
+            let release = Arc::clone(&release);
+            handles.push(std::thread::spawn(move || {
+                start.wait();
+                let permit = ConnectionPermit::acquire(&active, 4);
+                release.wait();
+                permit.is_some()
+            }));
+        }
+        start.wait();
+        release.wait();
+        let admitted = handles.into_iter().filter(|h| h.join().unwrap()).count();
+        assert_eq!(admitted, 4, "only four simultaneous connections may be admitted");
+        assert_eq!(active.load(Ordering::SeqCst), 0, "all slots must be returned");
+    }
 
     #[test]
     fn bounded_json_lines_reject_oversized_and_invalid_utf8_without_losing_next_line() {
