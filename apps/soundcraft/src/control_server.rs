@@ -171,20 +171,25 @@ mod tests {
     fn connection_limit_is_atomic_under_concurrent_accepts() {
         let active = Arc::new(AtomicUsize::new(0));
         let start = Arc::new(std::sync::Barrier::new(17));
+        let acquired = Arc::new(std::sync::Barrier::new(17));
         let release = Arc::new(std::sync::Barrier::new(17));
         let mut handles = Vec::new();
         for _ in 0..16 {
             let active = Arc::clone(&active);
             let start = Arc::clone(&start);
+            let acquired = Arc::clone(&acquired);
             let release = Arc::clone(&release);
             handles.push(std::thread::spawn(move || {
                 start.wait();
                 let permit = ConnectionPermit::acquire(&active, 4);
+                acquired.wait();
                 release.wait();
                 permit.is_some()
             }));
         }
         start.wait();
+        acquired.wait();
+        assert_eq!(active.load(Ordering::SeqCst), 4);
         release.wait();
         let admitted = handles.into_iter().filter(|h| h.join().unwrap()).count();
         assert_eq!(admitted, 4, "only four simultaneous connections may be admitted");
