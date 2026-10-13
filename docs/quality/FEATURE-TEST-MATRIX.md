@@ -56,6 +56,8 @@ listed here corresponds to the PR's actual HEAD SHA.
 | [#65](https://github.com/Rwanbt/soundcraft/pull/65) | `2e408332` | [success](https://github.com/Rwanbt/soundcraft/actions/runs/38278237685) | [success](https://github.com/Rwanbt/soundcraft/actions/runs/38278237746) | [Chromium success](https://github.com/Rwanbt/soundcraft/actions/runs/38278237672), [FreeBSD success](https://github.com/Rwanbt/soundcraft/actions/runs/38278237673) | Recording-frame integrity |
 | [#66](https://github.com/Rwanbt/soundcraft/pull/66) | `96b7bff9` | [success](https://github.com/Rwanbt/soundcraft/actions/runs/38313570703) | [success](https://github.com/Rwanbt/soundcraft/actions/runs/38313570794) | [Chromium success](https://github.com/Rwanbt/soundcraft/actions/runs/38313570700) | Correlated TCP replies and at-most-once client dispatch |
 | [#67](https://github.com/Rwanbt/soundcraft/pull/67) | `741740fc` | [success](https://github.com/Rwanbt/soundcraft/actions/runs/38313734760) | [success](https://github.com/Rwanbt/soundcraft/actions/runs/38313734754) | [Chromium success](https://github.com/Rwanbt/soundcraft/actions/runs/38313734751) | Bounded MCP JSON-RPC input and batch errors |
+| [#68](https://github.com/Rwanbt/soundcraft/pull/68) | `370f7a4d` | [success](https://github.com/Rwanbt/soundcraft/actions/runs/38320661923) | [success](https://github.com/Rwanbt/soundcraft/actions/runs/38320661916) | [Chromium success](https://github.com/Rwanbt/soundcraft/actions/runs/38320661934) | Reject corrupt session IDs and invalid sample rates |
+| [#69](https://github.com/Rwanbt/soundcraft/pull/69) | `46016505` | [success](https://github.com/Rwanbt/soundcraft/actions/runs/38320450405) | [success](https://github.com/Rwanbt/soundcraft/actions/runs/38320450361) | [Chromium success](https://github.com/Rwanbt/soundcraft/actions/runs/38320450388), [FreeBSD success](https://github.com/Rwanbt/soundcraft/actions/runs/38320450419) | Exact-last-frame monitoring / partial stereo callback; **stacked on #65** |
 
 Additional LLVM snapshots (do not sum them): PR #66 at `96b7bff9` measured
 **35,797 / 46,947 lines = 76.25%** globally, with
@@ -63,6 +65,13 @@ Additional LLVM snapshots (do not sum them): PR #66 at `96b7bff9` measured
 PR #67 at `741740fc` measured **35,798 / 46,975 lines = 76.21%**
 globally, with `crates/automation/src/mcp.rs`
 **200 / 231 lines = 86.58%**.
+Additional independently measured snapshots:
+- PR #68 at `370f7a4d`: **35,757 / 46,962 = 76.14%** workspace lines;
+  `crates/model/src/session.rs`: **412 / 442 = 93.21%** lines.
+- PR #69 at `46016505`: **35,792 / 47,000 = 76.15%** workspace lines;
+  `crates/playback/src/record.rs`: **318 / 361 = 88.09%** lines.
+These are per-PR snapshots, not merged results.
+
 These values are independently instrumented on distinct branches, not a
 combined result or a comparable fixed-denominator global trend.
 
