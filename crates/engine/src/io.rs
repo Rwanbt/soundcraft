@@ -566,8 +566,20 @@ pub fn open_session(e: &mut Engine, path: &str) -> Result<Vec<String>> {
 /// input route names ("In 3" → channel 2), defaulting to the first channels.
 pub fn add_recording(e: &mut Engine, start: Samples, channels: Vec<Vec<f32>>, rate: u32) -> Result<Vec<soundcraft_model::ClipId>> {
     let frames = channels.first().map_or(0, Vec::len);
+    if channels.iter().any(|ch| ch.len() != frames) {
+        return Err(EngineError::BadParams("record".into(), "recorded channels have inconsistent frame counts".into()));
+    }
     if frames == 0 {
         return Ok(Vec::new());
+    }
+    if soundcraft_time::SampleRate::new(rate).is_err() {
+        return Err(EngineError::BadParams("record".into(), format!("unsupported recording sample rate {rate} Hz")));
+    }
+    if frames.saturating_mul(channels.len()) > MAX_IMPORT_SAMPLES {
+        return Err(EngineError::BadParams("record".into(), "recording exceeds the maximum sample count".into()));
+    }
+    if channels.iter().flatten().any(|sample| !sample.is_finite()) {
+        return Err(EngineError::BadParams("record".into(), "recording contains non-finite audio samples".into()));
     }
     let armed: Vec<(TrackId, usize, usize, String)> = e
         .session()
