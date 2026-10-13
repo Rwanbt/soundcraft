@@ -191,7 +191,7 @@ mod tests {
         acquired.wait();
         assert_eq!(active.load(Ordering::SeqCst), 4);
         release.wait();
-        let admitted = handles.into_iter().filter(|h| h.join().unwrap()).count();
+        let admitted = handles.into_iter().map(|h| h.join().unwrap()).filter(|ok| *ok).count();
         assert_eq!(admitted, 4, "only four simultaneous connections may be admitted");
         assert_eq!(active.load(Ordering::SeqCst), 0, "all slots must be returned");
     }
