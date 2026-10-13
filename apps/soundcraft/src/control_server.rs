@@ -55,10 +55,7 @@ struct ConnectionPermit(Arc<AtomicUsize>);
 
 impl ConnectionPermit {
     fn acquire(active: &Arc<AtomicUsize>, limit: usize) -> Option<Self> {
-        active
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| (count < limit).then_some(count + 1))
-            .ok()
-            .map(|_| Self(Arc::clone(active)))
+        active.fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| (count < limit).then_some(count + 1)).ok().map(|_| Self(Arc::clone(active)))
     }
 }
 
@@ -154,9 +151,7 @@ mod tests {
     #[test]
     fn connection_limit_rejects_overflow_then_reuses_released_slot() {
         let active = Arc::new(AtomicUsize::new(0));
-        let held: Vec<_> = (0..MAX_CONTROL_CONNECTIONS)
-            .map(|_| ConnectionPermit::acquire(&active, MAX_CONTROL_CONNECTIONS).unwrap())
-            .collect();
+        let held: Vec<_> = (0..MAX_CONTROL_CONNECTIONS).map(|_| ConnectionPermit::acquire(&active, MAX_CONTROL_CONNECTIONS).unwrap()).collect();
         assert_eq!(active.load(Ordering::SeqCst), MAX_CONTROL_CONNECTIONS);
         assert!(ConnectionPermit::acquire(&active, MAX_CONTROL_CONNECTIONS).is_none());
         drop(held);
